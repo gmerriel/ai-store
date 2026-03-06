@@ -1,7 +1,7 @@
 # Australian Compliance Rules - Mortgage Brokers
 
 ## Purpose
-Ensure all outbound communications comply with Australian financial services regulations and consumer protection laws specific to mortgage broking.
+Ensure all outbound communications comply with Australian financial services regulations and consumer protection laws specific to mortgage broking. You are ONLY checking the message content for legal compliance — not frequency, not opt-out, not sender identification. Those are handled elsewhere in the system.
 
 ## Rules by Regulation
 
@@ -44,26 +44,6 @@ Ensure all outbound communications comply with Australian financial services reg
 - **Constraint**: Claims MUST be reasonable, representative, non-misleading
 - **Severity**: MEDIUM
 
-### SPAM Act 2003
-
-#### RULE SPAM-01 | Sender Identification
-- **Constraint**: Message MUST identify sender (can be in sign-off with name)
-- **Test**: Check for sender name in sign-off
-- **Severity**: HIGH
-
-#### RULE SPAM-02 | Opt-Out Mechanism
-- **Subject**: Any lead with `total_sends` >= 3
-- **Constraint**: MUST include opt-out mechanism
-- **Test**: Check for soft contextual opt-out OR mechanical opt-out
-- **Soft examples**: "no worries if now's not the right time", "happy to step back", "not keen? all good"
-- **Note**: Soft opt-outs are PREFERRED. Mechanical opt-outs ("Reply STOP") should be flagged as STYLE ISSUE.
-- **Severity**: CRITICAL (for sends >= 3)
-
-#### RULE SPAM-03 | Frequency Advisory
-- **Subject**: Any lead with `total_sends` >= 6
-- **Constraint**: HIGH frequency - flag for review. Recommend extended gap.
-- **Severity**: ADVISORY (warn but don't fail)
-
 ### Australian Consumer Law (ACL)
 
 #### RULE ACL-01 | Misleading Conduct Prohibition
@@ -103,15 +83,14 @@ A message FAILS compliance if ANY of these are true:
 2. Implies guaranteed or certain approval
 3. Uses unsubstantiated superlatives about rates/process
 4. Creates artificial urgency on finance offers
-5. Fails to identify sender (for any message)
-6. Lacks opt-out for leads with total_sends >= 3
-7. Uses guilt, fear, or FOMO pressure tactics
-8. Misleads about the broker's services
-9. Implies borrowing capacity without assessment
+5. Uses guilt, fear, or FOMO pressure tactics
+6. Misleads about the broker's services
+7. Implies borrowing capacity without assessment
 
-### Preferred Opt-Out Approach
-For leads with multiple sends, soft opt-outs are preferred over mechanical ones:
-- "no worries if now's not the right time"
-- "happy to step back if you're not keen"
-- "not interested? no drama"
-- These feel conversational and Australian
+### What You Do NOT Check
+- Send frequency or volume (handled by the orchestrator)
+- Opt-out or unsubscribe language (handled by the system)
+- Sender identification (handled by the pipeline)
+- Whether the lead has been contacted too many times (not your concern)
+
+You ONLY evaluate the words in the message for legal compliance.
