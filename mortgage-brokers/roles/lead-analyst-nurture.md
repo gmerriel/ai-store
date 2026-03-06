@@ -69,7 +69,7 @@ For nurture leads, angles shift toward:
   "length_recommendation": "[short|standard|detailed]",
   "information_needed": "[what does the lead need to move forward?]",
   "inferred_gender": "[male|female|unknown]",
-  "recommended_send_time": "YYYY-MM-DD HH:MM",
+  "recommended_send_time": "HH:MM",
   "send_time_reasoning": "[why this time]",
   "reasoning": "[2-3 sentences explaining your nurture strategy]",
   "suggested_value_add": "[specific information, insight, or resource to share]",

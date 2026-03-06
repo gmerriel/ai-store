@@ -85,7 +85,7 @@ Return your analysis as a JSON object:
   "include_cta": true|false,
   "cta_type": "[soft|none]",
   "inferred_gender": "[male|female|unknown]",
-  "recommended_send_time": "YYYY-MM-DD HH:MM",
+  "recommended_send_time": "HH:MM",
   "send_time_reasoning": "[why this time]",
   "reasoning": "[2-3 sentences explaining your re-engagement strategy — always focused on reconnecting with their vehicle desire]",
   "what_not_to_repeat": "[angles/channels to avoid based on history]",

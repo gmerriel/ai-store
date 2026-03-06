@@ -83,7 +83,7 @@ Return your analysis as a JSON object with this structure:
   "cta_type": "[soft|booking|informational|none]",
   "inferred_gender": "[male|female|unknown]",
   "audience_segment": "[segment name]",
-  "recommended_send_time": "YYYY-MM-DD HH:MM",
+  "recommended_send_time": "HH:MM",
   "send_time_reasoning": "[why this time]",
   "reasoning": "[2-3 sentences explaining your strategy]",
   "what_not_to_repeat": "[angles/approaches to avoid based on history]",

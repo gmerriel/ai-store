@@ -26,6 +26,8 @@ Recommend optimal send times based on lead behavior patterns, employment type, a
 - **Investors**: Often prefer business hours, more transactional mindset
 
 ### Output Format
-- `recommended_send_time`: "YYYY-MM-DD HH:MM" (in the lead's local timezone)
+- `recommended_send_time`: "HH:MM" — time only, 24-hour format, in the lead's local timezone
 - `send_time_reasoning`: Brief explanation of why this time
-- Must be within compliant hours (8am-8:30pm local time of the lead's state)
+- The system will schedule for today or the next valid send day automatically. You only need to recommend the optimal TIME of day.
+- Must be within compliant hours (9am-7pm local time of the lead's state)
+- Pick natural-looking times (e.g. 10:17, 14:42) not round numbers (10:00, 15:00)
