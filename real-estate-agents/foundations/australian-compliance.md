@@ -26,12 +26,14 @@ Ensure all outbound communications comply with Australian consumer protection la
 - **Constraint**: Claims about market conditions MUST be factual and reasonable
 - **Test**: Scan for "prices only go up", "guaranteed growth", "can't lose"
 - **Exception**: General factual market commentary (e.g., "clearance rates were strong last weekend") permitted
+- **NOT violations**: Casual observations like "market's been moving", "a few things sold recently", "interesting what buyers are doing right now" — these are normal conversational hooks, not regulated market claims. Only flag statements that make specific, falsifiable predictions or guarantees about prices/growth.
 - **Severity**: HIGH
 
 ### Australian Consumer Law (ACL)
 
 #### RULE ACL-01 | Misleading Conduct Prohibition
 - **Constraint**: MUST NOT mislead about agent's services, market conditions, or property attributes
+- **NOT violations**: Saying "a few properties moved recently" or "interesting things happening in the market" is conversational framing, not a misleading claim. Only flag statements that misrepresent what the agent does, fabricate market data, or make false claims about specific properties.
 - **Severity**: HIGH
 
 #### RULE ACL-02 | Vulnerable Consumer Protection

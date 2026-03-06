@@ -18,8 +18,9 @@ Ensure all outbound communications comply with Australian financial services reg
 - **Severity**: CRITICAL
 
 #### RULE ASIC-03 | Misleading Comparison Prohibition
-- **Constraint**: MUST NOT use unsubstantiated superlatives
+- **Constraint**: MUST NOT use unsubstantiated superlatives ABOUT RATES OR SERVICES
 - **Test**: Scan for "cheapest", "best rates", "lowest", "#1", "unbeatable"
+- **NOT violations**: Casual conversational observations like "deals are better than most people think", "interesting things happening in the market", "options have improved" — these are normal sales language, not regulated superlatives. Only flag claims that specifically compare rates, fees, or services to competitors.
 - **Severity**: HIGH
 
 #### RULE ASIC-04 | False Urgency Prohibition
@@ -30,12 +31,14 @@ Ensure all outbound communications comply with Australian financial services reg
 
 #### RULE ASIC-05 | Factual Claims
 - **Constraint**: Claims MUST be reasonable, representative, non-misleading
+- **NOT violations**: Vague market observations ("things have shifted", "noticed something interesting") are fine. These are conversational hooks, not factual claims about specific rates or products. Only flag statements that make specific, verifiable claims that are false or misleading.
 - **Severity**: MEDIUM
 
 ### Australian Consumer Law (ACL)
 
 #### RULE ACL-01 | Misleading Conduct Prohibition
 - **Constraint**: MUST NOT mislead about SAB's services or the finance process
+- **NOT violations**: Saying "we've noticed interesting things in the market" or "something made me think of you" is conversational framing, not a misleading claim about services. Only flag statements that misrepresent what SAB actually does or how the finance process works.
 - **Severity**: HIGH
 
 #### RULE ACL-02 | Vulnerable Consumer Protection
