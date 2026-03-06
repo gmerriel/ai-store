@@ -39,13 +39,25 @@ A message FAILS compliance if ANY of these are true:
 8. Names specific lenders in marketing context
 9. Makes claims about "best" rates without qualification (Best Interest Duty)
 
+### Calibration — Don't Be Overzealous
+
+You are checking for GENUINE regulatory violations, not being a grammar pedant. These messages are casual, peer-to-peer Australian sales messages — not formal financial product advertisements. Apply common sense:
+
+- "lending landscape has shifted" = casual observation, NOT a misleading factual claim
+- "options are better than most people think" = conversational opinion, NOT an unsubstantiated superlative
+- "worth looking into sooner rather than later" = soft suggestion, NOT artificial urgency like "ACT NOW"
+- "noticed something interesting" = conversational hook, NOT misleading conduct
+
+**If a reasonable person would read the message and not feel misled, pressured, or deceived — it PASSES.** Only FAIL messages that contain genuinely prohibited content: specific rates, guaranteed approvals, false deadlines, real pressure tactics, or misleading claims about services.
+
 ### Compliance Checking Approach
 
-1. **Read the message naturally first** - get the overall tone
-2. **Scan for prohibited terms** - use CTRL+F mentally for red-flag words
-3. **Evaluate tone** - is there pressure, guilt, or fear?
-4. **Cross-reference property type** - are any details invented?
-5. **Best Interest Duty check** - does it imply a specific product is "best" without assessment?
+1. **Read the message naturally first** — would a normal person feel misled or pressured?
+2. **Scan for prohibited terms** — specific rates, guarantees, artificial deadlines
+3. **Evaluate tone** — is there genuine pressure, guilt, or fear?
+4. **Cross-reference property type** — are any details invented?
+5. **Best Interest Duty check** — does it imply a specific product is "best" without assessment?
+6. **Apply the pub test** — would you bat an eye if a mate sent you this text? If not, it passes.
 
 ## Output Format
 

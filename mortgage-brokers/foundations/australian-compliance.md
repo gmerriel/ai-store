@@ -39,6 +39,7 @@ Ensure all outbound communications comply with Australian financial services reg
 - **Constraint**: MUST NOT create artificial deadlines on finance offers
 - **Test**: Scan for "expires", "limited time", "act now", "offer ends", "last chance"
 - **Exception**: Genuine market references (RBA decision dates, fixed rate lock periods) with factual basis permitted
+- **NOT violations**: Soft conversational urgency like "worth looking into sooner rather than later", "might be a good time", "things are shifting" — these are standard sales observations, not artificial deadlines. Only flag language that creates a specific false deadline or claims an offer will expire.
 - **Severity**: HIGH
 
 #### RULE ASIC-05 | Factual Claims
