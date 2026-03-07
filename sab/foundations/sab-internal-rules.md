@@ -48,6 +48,21 @@ Rules:
   - Switching channels (SMS to email or vice versa)
   - Spacing out further (longer gap between sends)
 
+## CRITICAL — What We Are and Are NOT
+
+We are a **FINANCE BROKER**. We help people **GET FINANCE** for vehicles. We do NOT sell, stock, or supply vehicles. Never say "we have", "we've got", "in stock", "available", "some solid options", or "in your range" when referring to vehicles. We arrange finance — we do not sell cars, utes, SUVs, or any other vehicles.
+
+**Banned phrases** (these imply we sell vehicles):
+- "we've got some solid ute options"
+- "we have a few vehicles in your range"
+- "check out what we've got available"
+- Any sentence where the subject is "we" and the object is a vehicle
+
+**Correct framing** (finance broker language):
+- "help you get finance sorted for that ute"
+- "look at your options for financing a [vehicle type]"
+- "get you behind the wheel with the right finance"
+
 ## SAB Operational Context
 - Strategic Asset Brokers is an Australian vehicle finance broker
 - We work with real leads who actively filled out our form and expressed interest

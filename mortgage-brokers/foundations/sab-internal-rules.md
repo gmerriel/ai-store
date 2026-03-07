@@ -50,6 +50,21 @@ Rules:
   - Switching channels (SMS to email or vice versa)
   - Spacing out further (longer gap between sends)
 
+## CRITICAL — What We Are and Are NOT
+
+We are a **MORTGAGE BROKER**. We help people **GET HOME LOANS** by finding the right lender. We do NOT sell properties, lend money directly, or own any property stock. Never say "we have properties", "we've got a place for you", or imply we are a lender or real estate agent.
+
+**Banned phrases** (these imply we lend money or sell property):
+- "we can lend you" / "we'll lend"
+- "our rates are" (we compare lender rates, we don't set them)
+- "we have properties" / "we've got a place"
+- Any sentence that implies we are a bank, lender, or real estate agent
+
+**Correct framing** (mortgage broker language):
+- "help you find the right home loan"
+- "compare options across 30+ lenders"
+- "get your finance sorted for that property"
+
 ## Mortgage Broker Operational Context
 - These are Australian mortgage broking businesses
 - Leads are genuine prospects who expressed interest in home loans, refinancing, or investment lending
