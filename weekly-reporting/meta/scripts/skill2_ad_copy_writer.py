@@ -47,6 +47,16 @@ def _count_words(text: str) -> int:
     return len(text.split())
 
 
+def _format_body_copy(text: str) -> str:
+    """Every sentence on its own line with a blank line between — required Meta ad format."""
+    import re
+    if not text:
+        return text
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    return "\n\n".join(s.strip() for s in sentences if s.strip())
+
+
+
 def _parse_hooks(concept_block: str, body_ref: str) -> List[Dict[str, Any]]:
     """Parse HOOK_{body_ref}1..5 blocks from a concept block."""
     hooks = []
@@ -167,6 +177,21 @@ MANDATORY:
 - Use real numbers from transcripts (especially for Continuers)
 - Count words (150-200 body, 35-55 hooks)
 - Note which source inspired each concept
+
+BODY COPY FORMATTING (critical — non-negotiable):
+- Every sentence is its own line
+- After every sentence, add one blank line (empty line) before the next sentence
+- This is how the ad will appear in Meta — wall-of-text kills scroll-stop
+- Example format:
+  I worked 237 days straight last year.
+
+  My wife went to bed alone every single night.
+
+  I told myself it was for the business.
+
+  Turns out, I was pricing every job wrong by 40%.
+
+  This free calculator fixed that in 10 minutes.
 
 OUTPUT FORMAT (strict — parse this):
 CONCEPT_START
@@ -306,7 +331,7 @@ def write_markdown(
             f"",
             f"#### Body A ({_count_words(c['body_a'])} words)",
             f"",
-            c["body_a"],
+            _format_body_copy(c["body_a"]),
             f"",
         ]
         for h in c.get("hooks_a", []):
@@ -321,7 +346,7 @@ def write_markdown(
         lines += [
             f"#### Body B ({_count_words(c['body_b'])} words)",
             f"",
-            c["body_b"],
+            _format_body_copy(c["body_b"]),
             f"",
         ]
         for h in c.get("hooks_b", []):

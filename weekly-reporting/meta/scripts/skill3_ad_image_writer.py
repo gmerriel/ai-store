@@ -163,6 +163,10 @@ def build_prompt(
     variants_section, flat_variants = _build_variants_section(concepts_data)
 
     prompt = f"""You are an expert AI image prompt writer for Facebook/Instagram ads.
+Your prompts are used directly by AI image generators (Gemini, DALL-E 3). They must be long, specific, and visually unambiguous.
+
+MINIMUM LENGTH RULE: Every PROMPT field must be 500+ words. No exceptions.
+SHORT PROMPTS FAIL. Vague prompts produce generic images. Specific prompts produce winning ads.
 
 TOP PERFORMING IMAGE ADS (what's working — all time):
 {winners_section}
@@ -174,22 +178,83 @@ For each variant, write 2 prompts (Option A and Option B).
 Option A = based on the winning format.
 Option B = different format, same hook story.
 
-HOOK ALIGNMENT RULE: When text appears in the image (Reddit headline, whiteboard message, sticky note, etc.), it MUST echo the specific paired hook language — not a generic message about the offer.
+HOOK ALIGNMENT RULE: When text appears in the image (Reddit headline, whiteboard message, sticky note, etc.), it MUST use the exact paired hook language word-for-word.
+
+MANDATORY FIELDS IN EVERY PROMPT (all must be present, all must be detailed):
+1. format — specific name (reddit-screenshot, whiteboard, phone-screenshot, split-panel, site-candid, meme)
+2. platform — canvas dimensions and placement (e.g. "Facebook/Instagram feed, 1:1 1080×1080px")
+3. exact_text — every word of text that appears in the image, verbatim from the hook
+4. text_placement — where on the canvas text appears, font size, weight, colour
+5. setting — specific location (not "office" — "a weathered timber workshop bench with metal shavings and a yellow Dewalt drill visible")
+6. props — every object in frame, specific brand/colour/condition
+7. person_description — age, build, trade clothing (stubby shorts, hi-vis, work boots), expression, pose, whether looking at camera
+8. lighting — direction, quality, colour temperature, time of day
+9. composition — shot angle (eye-level, slightly below, overhead), focal length feel, depth of field
+10. colour_palette — 3-5 hex codes that dominate the image
+11. authenticity_signals — what makes this look like a real business owner's photo (cluttered background, worn tools, slightly overexposed, candid mid-action)
+12. what_to_avoid — at least 5 specific things (stock photo backgrounds, perfect symmetry, models with makeup, brand logos, white clean studios, etc.)
+13. ai_model_note — "Gemini 1.5 Pro for photorealistic" OR "DALL-E 3 for graphic/meme"
+
+EXAMPLE OF A CORRECT 500-WORD PROMPT (use this as your template):
+{{
+  "format": "reddit-screenshot",
+  "platform": "Facebook/Instagram feed, 1:1 square, 1080x1080px",
+  "exact_text": "Worked 237 days straight. Still barely breaking even. Here's what nobody tells you about trade pricing.",
+  "text_placement": {{
+    "subreddit_label": "r/TradieLife — top left, 11pt Noto Sans, #888888",
+    "username": "u/sparky_qld_pete — next to subreddit, same size, grey",
+    "headline": "Worked 237 days straight. Still barely breaking even. Here's what nobody tells you about trade pricing. — 26pt bold Noto Sans, #1A1A1B, full width",
+    "body_preview": "First two lines of body text visible before 'read more' truncation — 13pt regular, #3C3C3C",
+    "engagement_bar": "2.4k upvotes | 318 comments | Share | Award — #FF4500 for upvote button, rest #888888, 12pt"
+  }},
+  "reddit_ui_chrome": {{
+    "card_background": "#FFFFFF",
+    "outer_wrapper": "#1A1A1B dark background, visible as 16px border all sides",
+    "upvote_button": "orange arrow #FF4500 in active/upvoted state",
+    "awards": "one gold award icon visible next to title",
+    "time_posted": "8 hours ago",
+    "note": "This must be pixel-perfect Reddit mobile UI. Any deviation kills authenticity."
+  }},
+  "setting": "The screenshot fills 88% of the canvas. The dark Reddit background wraps the white card. No real-world setting — this is purely a UI screenshot mockup.",
+  "props": "None — this is a digital screenshot. No physical objects. Only Reddit interface elements.",
+  "person_description": "No person — this is a text-only Reddit post screenshot.",
+  "lighting": "Digital interface only. Flat, no shadows on the UI card itself. Slight drop shadow on the card edge (2px, 10% opacity black).",
+  "composition": "Straight-on flat lay, no perspective distortion. Screenshot centered with equal dark margins on all four sides. Aspect ratio locked to 1:1.",
+  "colour_palette": ["#FFFFFF (card)", "#1A1A1B (outer wrap)", "#FF4500 (upvote)", "#1A1A1B (headline text)", "#888888 (meta text)"],
+  "authenticity_signals": [
+    "Username looks like a real person (first name + trade + city abbreviation)",
+    "Subreddit is trade-specific but not a real existing subreddit (avoid lawsuits)",
+    "Upvote count in thousands — implies viral traction",
+    "Time posted is recent (hours not days)",
+    "Body text starts mid-thought — authentic personal voice",
+    "No brand watermarks or logos anywhere"
+  ],
+  "what_to_avoid": [
+    "Any perspective angle — must be perfectly flat/straight-on",
+    "Real Reddit subreddit names that could be confused with actual communities",
+    "Professional brand colours or gradients",
+    "Perfect symmetry or overly designed layouts",
+    "Any photos or illustrations within the Reddit card",
+    "Clean white studio backgrounds",
+    "Generic 'businessman at desk' stock imagery"
+  ],
+  "ai_model_note": "DALL-E 3 for precise UI text rendering. Do not use Midjourney — struggles with exact text. Generate as flat digital mockup, not a photograph."
+}}
 
 AD VARIANTS:
 {variants_section}
 For each variant, output:
 PROMPT_START
 IMAGE_ID: {{concept_id}}_{{body_ref}}_H{{i}}_IMG_A
-PAIRED_HOOK: [hook text]
+PAIRED_HOOK: [exact hook text]
 FORMAT: [format name]
-PROMPT: [500+ word detailed JSON image prompt — include exact text wording, colors, setting, props, person, lighting, mood, authenticity signals, what to avoid, preferred AI model: Gemini for photorealistic / DALL-E 3 for graphic]
+PROMPT: [500+ word JSON prompt with ALL 13 mandatory fields — use the example above as your template length and detail level]
 PROMPT_END
 PROMPT_START
 IMAGE_ID: {{concept_id}}_{{body_ref}}_H{{i}}_IMG_B
-PAIRED_HOOK: [same hook]
+PAIRED_HOOK: [same hook text]
 FORMAT: [different format]
-PROMPT: [500+ word JSON prompt]
+PROMPT: [500+ word JSON prompt with ALL 13 mandatory fields]
 PROMPT_END"""
 
     return prompt, flat_variants
