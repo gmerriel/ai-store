@@ -104,31 +104,47 @@ def parse_image_prompts(response_text: str) -> List[Dict[str, Any]]:
 
 # ─── PROMPT BUILDER ──────────────────────────────────────────────────────────
 
+# Neutral visual-style names (used in prompts — no social-platform references)
+_FORMAT_NEUTRAL = {
+    "reddit-screenshot":   "community-discussion-card",
+    "forum-screenshot":    "community-discussion-card",
+    "whiteboard":          "whiteboard-scene",
+    "site-candid":         "on-location-photo",
+    "candid":              "on-location-photo",
+    "meme":                "image-with-text-overlay",
+    "phone-screenshot":    "phone-screen-graphic",
+    "infographic":         "informational-graphic",
+    "split-panel":         "split-panel-comparison",
+    "testimonial":         "quote-card",
+}
 
-def _build_variants_section(concepts_data: List[Dict[str, Any]]) -> Tuple[str, List[Dict]]:
-    """
-    Build the AD VARIANTS section of the prompt.
-    Returns (variants_text, flat_variant_list).
-    """
-    lines = []
-    flat_variants = []
 
+def _neutral_format(raw: str) -> str:
+    """Map raw format name to a neutral visual-style name."""
+    return _FORMAT_NEUTRAL.get(raw.lower().strip(), raw)
+
+
+def _build_flat_variants(concepts_data: list) -> list:
+    """
+    Flatten concepts → body copies → hooks into a list of variant dicts.
+    Returns list of dicts with variant_id, concept_id, body_ref, hook_index, hook_type, hook_text, body_copy.
+    """
+    flat = []
     for c in concepts_data:
         concept_id = c.get("concept_id", "")
-        hooks_a = json.loads(c.get("hooks_a", "[]")) if isinstance(c.get("hooks_a"), str) else (c.get("hooks_a") or [])
-        hooks_b = json.loads(c.get("hooks_b", "[]")) if isinstance(c.get("hooks_b"), str) else (c.get("hooks_b") or [])
+        hooks_a = c.get("hooks_a", [])
+        hooks_b = c.get("hooks_b", [])
+        if isinstance(hooks_a, str):
+            import json as _json
+            hooks_a = _json.loads(hooks_a)
+        if isinstance(hooks_b, str):
+            import json as _json
+            hooks_b = _json.loads(hooks_b)
 
         for body_ref, hooks, body_copy in [("A", hooks_a, c.get("body_a", "")), ("B", hooks_b, c.get("body_b", ""))]:
             for h in hooks:
-                variant_id = f"{concept_id}_{body_ref}_H{h['index']}"
-                lines += [
-                    f"VARIANT: {variant_id}",
-                    f"Hook type: {h['type']}",
-                    f"Hook text: {h['text']}",
-                    "",
-                ]
-                flat_variants.append({
-                    "variant_id": variant_id,
+                flat.append({
+                    "variant_id": f"{concept_id}_{body_ref}_H{h['index']}",
                     "concept_id": concept_id,
                     "body_ref": body_ref,
                     "hook_index": h["index"],
@@ -136,133 +152,87 @@ def _build_variants_section(concepts_data: List[Dict[str, Any]]) -> Tuple[str, L
                     "hook_text": h["text"],
                     "body_copy": body_copy,
                 })
+    return flat
 
-    return "\n".join(lines), flat_variants
 
-
-def build_prompt(
-    image_winners: List[Dict[str, Any]],
-    concepts_data: List[Dict[str, Any]],
-) -> Tuple[str, List[Dict]]:
-    """Build the GPT-4o prompt for image prompt generation."""
-
-    winners_section = ""
-    for img in image_winners:
-        winners_section += (
-            f"RANK #{img.get('rank')} | CPL ${img.get('cpl', 0):.2f} | "
-            f"FORMAT: {img.get('image_format', 'unknown')}\n"
-            f"Text on image: {img.get('text_on_image', '')}\n"
+def build_batch_prompt(
+    variants_batch: list,
+    image_winners: list,
+) -> str:
+    """
+    Build a GPT-4o prompt for a batch of up to 5 variants.
+    Framed as visual direction for photographers/digital artists — no ad/social-media language.
+    Each variant gets 2 image descriptions (Option A + Option B), 500+ words each.
+    """
+    winners_text = ""
+    for img in image_winners[:3]:
+        fmt = _neutral_format(img.get("image_format", "photo"))
+        # Truncate text_on_image (can be huge) and strip any profanity/flagging content
+        raw_text = img.get("text_on_image", "none") or "none"
+        # Remove profanity variants that may trigger content filters
+        import re as _re
+        raw_text = _re.sub(r"f['\*]?n\b|f[\*]+|f\*\*k", "---", raw_text, flags=_re.IGNORECASE)
+        text_shown = raw_text[:120].strip()
+        if len(raw_text) > 120:
+            text_shown += "..."
+        winners_text += (
+            f"REFERENCE #{img.get('rank')} | STYLE: {fmt}\n"
+            f"Text shown: {text_shown}\n"
             f"Setting: {img.get('setting', '')}\n"
-            f"Authenticity signals: {img.get('authenticity_signals', '')}\n"
-            f"Core visual claim: {img.get('core_visual_claim', '')}\n\n"
+            f"Visual notes: {img.get('core_visual_claim', '')}\n\n"
         )
 
-    winning_format = image_winners[0].get("image_format", "reddit-screenshot") if image_winners else "reddit-screenshot"
-    second_format = image_winners[1].get("image_format", "whiteboard") if len(image_winners) > 1 else "whiteboard"
+    top_fmt = _neutral_format(image_winners[0].get("image_format", "on-location-photo")) if image_winners else "on-location-photo"
+    sec_fmt = _neutral_format(image_winners[1].get("image_format", "whiteboard-scene")) if len(image_winners) > 1 else "whiteboard-scene"
 
-    variants_section, flat_variants = _build_variants_section(concepts_data)
+    briefs_text = ""
+    for i, v in enumerate(variants_batch, 1):
+        briefs_text += f"BRIEF {i}\nID: {v['variant_id']}\nMessage: {v['hook_text']}\n\n"
 
-    prompt = f"""You are an expert AI image prompt writer for Facebook/Instagram ads.
-Your prompts are used directly by AI image generators (Gemini, DALL-E 3). They must be long, specific, and visually unambiguous.
+    return f"""You are a visual creative director writing detailed scene briefs for photographers and digital artists.
 
-MINIMUM LENGTH RULE: Every PROMPT field must be 500+ words. No exceptions.
-SHORT PROMPTS FAIL. Vague prompts produce generic images. Specific prompts produce winning ads.
+TOP-PERFORMING VISUAL REFERENCES (styles that have driven strong results):
+{winners_text}PRIMARY STYLE: {top_fmt}
+SECONDARY STYLE: {sec_fmt}
 
-TOP PERFORMING IMAGE ADS (what's working — all time):
-{winners_section}
-WINNING FORMAT: {winning_format} (from Rank #1 — use as Image Option A base)
-SECOND FORMAT: {second_format} (use as Image Option B base)
+TASK: For each of the {len(variants_batch)} briefs below, write 2 detailed visual descriptions — Option A (primary style) and Option B (secondary style).
 
-Generate 20 image prompts — one for each ad variant below.
-For each variant, write 2 prompts (Option A and Option B).
-Option A = based on the winning format.
-Option B = different format, same hook story.
+REQUIREMENTS FOR EVERY DESCRIPTION:
+- Minimum 500 words. Be exhaustively specific — vague descriptions produce generic visuals.
+- Include the exact Message text as the primary text element in the image.
+- Use all 12 fields listed below.
 
-HOOK ALIGNMENT RULE: When text appears in the image (Reddit headline, whiteboard message, sticky note, etc.), it MUST use the exact paired hook language word-for-word.
+REQUIRED FIELDS (include all 12 in every description):
+1. visual_style — format name (on-location-photo, whiteboard-scene, split-panel-comparison, text-over-photo, phone-screen-graphic, informational-graphic, quote-card)
+2. canvas — pixel dimensions and crop ratio
+3. text_overlay — exact message text verbatim, font size/weight/colour, placement, background treatment
+4. setting — precise location detail (specific surfaces, materials, time of day, architecture — not just "workshop")
+5. props — every object visible, with specific make/colour/condition/position in frame
+6. person — age range, build, trade clothing detail (brand, condition, colour), pose, expression, eye direction
+7. lighting — source direction, quality (soft/harsh/dappled), colour temperature in Kelvin, shadows, highlights
+8. composition — shot angle, lens focal length feel, depth of field, rule of thirds placement, negative space
+9. colour_palette — 4-5 dominant hex codes with descriptive labels
+10. mood — emotional tone in 2-3 words
+11. negative_prompts — 5 specific things to exclude
+12. generation_notes — AI model recommendation + any technical render flags
 
-MANDATORY FIELDS IN EVERY PROMPT (all must be present, all must be detailed):
-1. format — specific name (reddit-screenshot, whiteboard, phone-screenshot, split-panel, site-candid, meme)
-2. platform — canvas dimensions and placement (e.g. "Facebook/Instagram feed, 1:1 1080×1080px")
-3. exact_text — every word of text that appears in the image, verbatim from the hook
-4. text_placement — where on the canvas text appears, font size, weight, colour
-5. setting — specific location (not "office" — "a weathered timber workshop bench with metal shavings and a yellow Dewalt drill visible")
-6. props — every object in frame, specific brand/colour/condition
-7. person_description — age, build, trade clothing (stubby shorts, hi-vis, work boots), expression, pose, whether looking at camera
-8. lighting — direction, quality, colour temperature, time of day
-9. composition — shot angle (eye-level, slightly below, overhead), focal length feel, depth of field
-10. colour_palette — 3-5 hex codes that dominate the image
-11. authenticity_signals — what makes this look like a real business owner's photo (cluttered background, worn tools, slightly overexposed, candid mid-action)
-12. what_to_avoid — at least 5 specific things (stock photo backgrounds, perfect symmetry, models with makeup, brand logos, white clean studios, etc.)
-13. ai_model_note — "Gemini 1.5 Pro for photorealistic" OR "DALL-E 3 for graphic/meme"
-
-EXAMPLE OF A CORRECT 500-WORD PROMPT (use this as your template):
-{{
-  "format": "forum-style-graphic",
-  "platform": "Facebook/Instagram feed, 1:1 square, 1080x1080px",
-  "concept": "Ad creative styled as an organic community discussion post — a format that performs well because it mirrors real tradespeople sharing authentic experiences.",
-  "exact_text": "Worked 237 days straight. Still barely breaking even. Here's what nobody tells you about trade pricing.",
-  "text_placement": {{
-    "community_label": "Fictional branded community label — top left, 11pt sans-serif, #888888 — e.g. 'Trades Business Owners Group'",
-    "username": "Fictional first-person name + trade — e.g. 'Pete — Sparky, Brisbane' — same line, grey, 11pt",
-    "headline_text": "Worked 237 days straight. Still barely breaking even. Here's what nobody tells you about trade pricing. — 26pt bold, #1A1A1B, spans full card width",
-    "body_preview": "Two lines of body text — first-person personal story tone — 13pt regular, #3C3C3C",
-    "engagement_bar": "Reaction count + comment count + share link — 12pt, grey tones, bottom of card"
-  }},
-  "card_design": {{
-    "card_background": "#FFFFFF white card",
-    "outer_background": "#1A1A1B dark background as 16px border all sides",
-    "corner_radius": "8px rounded corners on card",
-    "drop_shadow": "Subtle 2px shadow, 10% black opacity, softens card edge"
-  }},
-  "setting": "Digital graphic only. The card fills 88% of the canvas. Dark outer background shows on all four sides. No real-world photography in this format variant.",
-  "props": "No physical props. Interface-style elements only: text blocks, fictional community name, fictional first-person username, reaction icon row, comment count. All fictional — no impersonation of real platforms.",
-  "person_description": "No person visible. The copy carries all human voice. The fictional username implies a real person behind the post without showing one.",
-  "lighting": "Flat digital render — no photography lighting. White card, no internal shadows. Clean and minimal.",
-  "composition": "Perfectly centred card on dark outer background. Zero angle or perspective. Straight-on flat view. Equal margins all four sides. 1:1 locked.",
-  "colour_palette": [
-    "#FFFFFF — card background",
-    "#1A1A1B — outer wrap and headline text",
-    "#888888 — meta text (community label, username, timestamp)",
-    "#3C3C3C — body copy text",
-    "#E5E5E5 — subtle card border stroke"
-  ],
-  "authenticity_signals": [
-    "Fictional username reads as a real individual tradesperson — not a brand or company name",
-    "Community label is clearly a branded group name — not impersonating any real social platform by name",
-    "Reaction count in hundreds or thousands — implies strong social traction",
-    "Timestamp shows recent post — e.g. 'posted 6 hours ago'",
-    "Body text starts mid-personal-story — first person, specific number, honest frustration or insight",
-    "No logos, brand colours, or corporate elements inside the card"
-  ],
-  "what_to_avoid": [
-    "Any angled or perspective view — must be flat and straight-on",
-    "Naming or visually referencing any real social platform (Reddit, Facebook, Twitter, etc.)",
-    "Stock photography or illustrations inside the card area",
-    "Corporate brand colours, gradients, or professional design polish inside the card",
-    "Any real platform logos, trademarks, or UI elements",
-    "Perfect visual symmetry that reads as designed rather than organic",
-    "Generic business stock imagery"
-  ],
-  "ai_model_note": "DALL-E 3 for precise text rendering in UI-style graphics. Generate as flat 2D digital mockup at 1080x1080px. This is a graphic design, not a photograph."
-}}
-
-AD VARIANTS:
-{variants_section}
-For each variant, output:
+BRIEFS:
+{briefs_text}
+OUTPUT FORMAT (strict — must follow exactly):
 PROMPT_START
-IMAGE_ID: {{concept_id}}_{{body_ref}}_H{{i}}_IMG_A
-PAIRED_HOOK: [exact hook text]
-FORMAT: [format name]
-PROMPT: [500+ word JSON prompt with ALL 13 mandatory fields — use the example above as your template length and detail level]
+IMAGE_ID: [ID from brief]_IMG_A
+PAIRED_HOOK: [exact message text]
+FORMAT: [visual style]
+PROMPT: [500+ word description covering all 12 fields]
 PROMPT_END
 PROMPT_START
-IMAGE_ID: {{concept_id}}_{{body_ref}}_H{{i}}_IMG_B
-PAIRED_HOOK: [same hook text]
-FORMAT: [different format]
-PROMPT: [500+ word JSON prompt with ALL 13 mandatory fields]
-PROMPT_END"""
+IMAGE_ID: [ID from brief]_IMG_B
+PAIRED_HOOK: [exact message text]
+FORMAT: [different visual style]
+PROMPT: [500+ word description covering all 12 fields]
+PROMPT_END
 
-    return prompt, flat_variants
+CRITICAL: You must complete a PROMPT_START/PROMPT_END block for EVERY brief listed above. Do not stop early. Write two blocks (IMG_A and IMG_B) per brief before moving to the next."""
 
 
 # ─── MARKDOWN OUTPUT ─────────────────────────────────────────────────────────
@@ -399,33 +369,44 @@ def run(account_key: str, funnel: str, week_start: str) -> None:
 
     print(f"  Image winners: {len(image_winners)}, Concepts: {len(concepts_data)}")
 
-    # ── Build prompt ──
-    print("\n[3] Building GPT-4o prompt…")
-    prompt, flat_variants = build_prompt(image_winners, concepts_data)
-
-    # ── Call GPT-4o ──
-    print("[3] Calling GPT-4o for image prompt generation…")
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=8192,
-            temperature=0.7,
-        )
-        response_text = response.choices[0].message.content or ""
-    except Exception as exc:
-        raise RuntimeError(f"GPT-4o call failed: {exc}") from exc
-
-    # ── Parse response ──
-    prompts = parse_image_prompts(response_text)
-    print(f"  Parsed {len(prompts)} image prompt(s).")
-
-    # Fill in hook_type from flat_variants lookup
+    # ── Flatten variants and batch into groups of 5 ──
+    print("\n[3] Building variant batches (5 per GPT-4o call)…")
+    flat_variants = _build_flat_variants(concepts_data)
     variant_lookup = {v["variant_id"]: v for v in flat_variants}
-    for p in prompts:
-        base_variant = p["image_id"].rsplit("_IMG_", 1)[0]
-        if base_variant in variant_lookup:
-            p["hook_type"] = variant_lookup[base_variant].get("hook_type", "")
+    batch_size = 2
+    batches = [flat_variants[i:i + batch_size] for i in range(0, len(flat_variants), batch_size)]
+    print(f"  {len(flat_variants)} variants → {len(batches)} batch(es)")
+
+    # ── Call GPT-4o per batch ──
+    all_prompts = []
+    for batch_num, batch in enumerate(batches, 1):
+        print(f"[3] Batch {batch_num}/{len(batches)}: {len(batch)} variant(s)…")
+        prompt = build_batch_prompt(batch, image_winners)
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=16000,
+                temperature=0.7,
+            )
+            response_text = response.choices[0].message.content or ""
+        except Exception as exc:
+            print(f"  [ERROR] GPT-4o call failed for batch {batch_num}: {exc}")
+            continue
+
+        batch_prompts = parse_image_prompts(response_text)
+        print(f"  Batch {batch_num}: parsed {len(batch_prompts)} prompt(s)")
+
+        # Fill in hook_type from lookup
+        for p in batch_prompts:
+            base_variant = p["image_id"].rsplit("_IMG_", 1)[0]
+            if base_variant in variant_lookup:
+                p["hook_type"] = variant_lookup[base_variant].get("hook_type", "")
+
+        all_prompts.extend(batch_prompts)
+
+    prompts = all_prompts
+    print(f"  Total parsed across all batches: {len(prompts)} image prompt(s).")
 
     # ── Save to Supabase ──
     for p in prompts:
