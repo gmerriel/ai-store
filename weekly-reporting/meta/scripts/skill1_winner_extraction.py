@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import time
+import urllib.parse
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests  # type: ignore
@@ -62,7 +63,11 @@ WORKSPACE_DIR = "/Users/atlas/.openclaw/workspace"
 
 BATCH_SIZE = 50          # Meta's hard limit per batch request
 BATCH_URL = "https://graph.facebook.com/"
-CREATIVE_FIELDS = "creative{id,body,title,object_story_spec,video_id,image_url,thumbnail_url}"
+# Field expansion uses { } — must be URL-encoded in batch relative_url.
+# requests.get handles this automatically; batch API strings do not.
+CREATIVE_FIELDS_ENCODED = (
+    "creative%7Bid%2Cbody%2Ctitle%2Cobject_story_spec%2Cvideo_id%2Cimage_url%2Cthumbnail_url%7D"
+)
 
 
 def _meta_get(url: str, params: Dict[str, Any], retries: int = 3) -> Dict[str, Any]:
@@ -106,7 +111,7 @@ def _meta_batch_creative_fetch(
         batch_payload = [
             {
                 "method": "GET",
-                "relative_url": f"{ad_id}?fields={CREATIVE_FIELDS}",
+                "relative_url": f"v23.0/{ad_id}?fields={CREATIVE_FIELDS_ENCODED}",
             }
             for ad_id in chunk
         ]
@@ -137,7 +142,7 @@ def _meta_batch_creative_fetch(
                     batch_results = []
                     break
 
-        for ad_id, item in zip(chunk, batch_results or []):
+        for i, (ad_id, item) in enumerate(zip(chunk, batch_results or [])):
             if not isinstance(item, dict):
                 continue
             code = item.get("code", 0)
@@ -145,7 +150,14 @@ def _meta_batch_creative_fetch(
                 continue
             try:
                 body = json.loads(item.get("body", "{}"))
-                results[ad_id] = body.get("creative", {})
+                creative = body.get("creative", {})
+                results[ad_id] = creative
+                # Debug: print first result of first batch to verify fields are returned
+                if batch_num == 1 and i == 0:
+                    has_spec = bool(creative.get("object_story_spec"))
+                    has_id = bool(creative.get("id"))
+                    print(f"    [DEBUG] First batch result — creative_id present: {has_id}, "
+                          f"object_story_spec present: {has_spec}")
             except (json.JSONDecodeError, AttributeError):
                 results[ad_id] = {}
 
