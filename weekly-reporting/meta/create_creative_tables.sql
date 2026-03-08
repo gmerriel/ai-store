@@ -1,5 +1,6 @@
 -- Creative Intelligence Pipeline — Supabase Tables
 -- Run this in: supabase.com → your project → SQL Editor → New query → Run
+-- Schema version: 2 (patched 2026-03-08 — added missing columns)
 
 -- Table 1: Ad Copy Winners (from Skill 1A)
 CREATE TABLE IF NOT EXISTS ad_copy_winners (
@@ -67,8 +68,12 @@ CREATE TABLE IF NOT EXISTS ad_image_winners (
 CREATE TABLE IF NOT EXISTS ad_concepts (
     concept_id      TEXT PRIMARY KEY,
     account_id      TEXT NOT NULL,
+    client_slug     TEXT,
     funnel_name     TEXT,
     week_start      DATE NOT NULL,
+    concept_num     TEXT,
+    concept_name    TEXT,
+    inspired_by     TEXT,
     headline        TEXT,
     body_a          TEXT,
     body_b          TEXT,
@@ -81,6 +86,9 @@ CREATE TABLE IF NOT EXISTS ad_concepts (
 -- Table 5: Ad Images (from Skill 3)
 CREATE TABLE IF NOT EXISTS ad_images (
     image_id        TEXT PRIMARY KEY,
+    account_id      TEXT,
+    funnel_name     TEXT,
+    week_start      DATE,
     concept_id      TEXT REFERENCES ad_concepts(concept_id),
     body_ref        CHAR(1),
     hook_index      SMALLINT,
@@ -97,6 +105,9 @@ CREATE TABLE IF NOT EXISTS ad_images (
 -- Table 6: Ad Video Scripts (from Skill 4)
 CREATE TABLE IF NOT EXISTS ad_video_scripts (
     script_id           TEXT PRIMARY KEY,
+    account_id          TEXT,
+    funnel_name         TEXT,
+    week_start          DATE,
     concept_id          TEXT REFERENCES ad_concepts(concept_id),
     body_ref            CHAR(1),
     hook_index          SMALLINT,
@@ -105,10 +116,12 @@ CREATE TABLE IF NOT EXISTS ad_video_scripts (
     location            TEXT,
     prop                TEXT,
     action              TEXT,
+    action_valid        BOOLEAN DEFAULT true,
+    action_warning      TEXT,
     directors_note      TEXT,
     full_script         TEXT,
     estimated_seconds   SMALLINT,
-    energy_level        TEXT,
+    energy              TEXT,
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
