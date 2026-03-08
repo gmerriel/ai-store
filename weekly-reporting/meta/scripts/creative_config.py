@@ -111,16 +111,21 @@ _GEO_PREFIXES = re.compile(
     r'^(AU&NZ|AUS&NZ|USA?&CA|AU/NZ|US/CA|NZ|AU|US|CA|AUS)\s*[-–]\s*',
     re.IGNORECASE,
 )
-_AGENCY_PREFIX = re.compile(r'^(VM:|PT:|VH:)\s*', re.IGNORECASE)
+# Agency prefix: "VM:", "PT:", "VH:" (colon) OR "VM -", "PT -" (dash — used by some campaigns)
+_AGENCY_PREFIX = re.compile(r'^(VM|PT|VH)\s*[:\-–]\s*', re.IGNORECASE)
 _WARM_COLD     = re.compile(r'^(Warm|Cold)\s*[-–]\s*', re.IGNORECASE)
 _TECH_SUFFIX   = re.compile(
-    r'\s*[-–]\s*(ADV\+|ABO|CBO|GamePlan|LAL[\d%]+|Hyros|Tradies|'
-    r'Lead\b|Leads\b|Form\b|PDF\b|Triage\b|Free Planning\b|AUS\b|NZD\b|USD\b|\d{3,}).*$',
+    r'\s*[-–]\s*(ADV\+|ABO|CBO|CBO\+|GamePlan|'
+    r'LAL\s*[\d%]+|LaL\s*[\d%]+|Hyros|Tradies|'
+    r'VSL\b|LP\b|LP\s+Lead\b|Broad\b|CONV\b|PI\b|'
+    r'Lead\b|Leads\b|Form\b|PDF\b|Triage\b|Free Planning\b|'
+    r'AUS\b|NZD\b|USD\b|AU\b|COLD\b|WARM\b|'
+    r'20\d{2}\b|\d{3,}).*$',
     re.IGNORECASE,
 )
-# "ADV+" sometimes appears without a preceding dash (space only before it)
-# No \b — "+" is not a word char so word boundaries don't work reliably here
+# "ADV+" / "VSL" sometimes appear without a preceding dash (space only before them)
 _INLINE_TECH   = re.compile(r'\s+ADV\+.*$', re.IGNORECASE)
+_INLINE_FORMAT = re.compile(r'\s+VSL\b.*$', re.IGNORECASE)
 _TRAILING_PAREN = re.compile(r'\s*\(.*$')
 
 
@@ -132,11 +137,19 @@ def campaign_name_to_slug(name: str) -> str:
     via creative_id deduplication in Phase 1A.
     """
     s = name.strip()
+    # Normalize pipe separators to dashes (e.g. "Top 8 Hotspots | Broad | Conv")
+    s = re.sub(r'\s*\|\s*', ' - ', s)
     s = _AGENCY_PREFIX.sub("", s).strip()
     s = _GEO_PREFIXES.sub("", s).strip()
     s = _WARM_COLD.sub("", s).strip()
-    s = _TECH_SUFFIX.sub("", s).strip()
-    s = _INLINE_TECH.sub("", s).strip()   # catch "ADV+" with no dash before it
+    # Loop tech suffix stripping (max 4 passes) — handles chained tokens like "VSL - AU - LP"
+    for _ in range(4):
+        prev = s
+        s = _TECH_SUFFIX.sub("", s).strip()
+        s = _INLINE_TECH.sub("", s).strip()
+        s = _INLINE_FORMAT.sub("", s).strip()
+        if s == prev:
+            break
     s = _TRAILING_PAREN.sub("", s).strip()
     slug = re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
     return slug or "unknown"
@@ -165,6 +178,23 @@ ACCOUNTS = {
         ],
     },
     # ── ADD NEW ACCOUNTS BELOW ─────────────────────────────────────────────
+    "dashdot": {
+        "account_id":  "act_229691921275637",
+        "client_id":   "164ab83a-2f4a-525c-a06a-ad54a8150641",
+        "client_slug": "dashdot",
+        "audience": (
+            "Australian property investors and aspiring investors, typically 28-50. "
+            "Want to build wealth through investment property. Often time-poor professionals "
+            "or small business owners. Motivated by financial freedom, passive income, "
+            "and retirement security. Skeptical of agents but open to expert guidance."
+        ),
+        "report_dir": os.path.expanduser("~/reports/dashdot/"),
+        "skip_objectives": ["OUTCOME_ENGAGEMENT", "OUTCOME_TRAFFIC"],
+        "skip_name_contains": [
+            "retargeting", "remarketing", "retention", "podcast",
+            "follower", "event", "awareness", "reach",
+        ],
+    },
     # "fitribe": {
     #     "account_id":  "act_947697689468163",
     #     "client_id":   "...",
