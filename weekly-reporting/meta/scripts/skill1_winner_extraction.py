@@ -177,12 +177,32 @@ def _compute_conversions(ad: Dict[str, Any]) -> int:
     )
 
 
-def _detect_funnel(url: str, funnels: Dict[str, Any]) -> str:
-    """Match a destination URL against funnel base_url_contains keys."""
-    clean = url.split("?")[0].lower()
+def _detect_funnel(
+    url: str,
+    funnels: Dict[str, Any],
+    ad_name: str = "",
+    campaign_name: str = "",
+) -> str:
+    """
+    Detect funnel for an ad. Priority:
+      1. base_url_contains — checked against destination URL (most reliable)
+      2. name_keywords     — checked against ad_name + campaign_name
+                            (fallback for fb.me redirect ads that hide the real URL)
+    """
+    clean_url = url.split("?")[0].lower()
+    combined_name = f"{ad_name} {campaign_name}".lower()
+
     for funnel_key, funnel_cfg in funnels.items():
-        if funnel_cfg["base_url_contains"].lower() in clean:
+        # URL match (most specific — use if destination URL is available)
+        if funnel_cfg.get("base_url_contains", "").lower() in clean_url and clean_url:
             return funnel_key
+
+    for funnel_key, funnel_cfg in funnels.items():
+        # Name fallback — for ads using fb.me redirects that hide the landing URL
+        for kw in funnel_cfg.get("name_keywords", []):
+            if kw.lower() in combined_name:
+                return funnel_key
+
     return "unknown"
 
 
@@ -224,7 +244,7 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
     params = {
         "date_preset": "maximum",
         "level": "ad",
-        "fields": "ad_id,ad_name,spend,actions",
+        "fields": "ad_id,ad_name,campaign_name,spend,actions",
         "limit": 500,
         "access_token": META_TOKEN,
     }
@@ -260,6 +280,8 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
             continue
         row["_spend"] = spend
         row["_conversions"] = conversions
+        row["_ad_name"] = row.get("ad_name", "")
+        row["_campaign_name"] = row.get("campaign_name", "")
         pre_qualified.append(row)
 
     print(f"  Ads passing noise floor (spend≥${MIN_SPEND_FLOOR}, conversions≥1): {len(pre_qualified)}")
@@ -279,7 +301,9 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
 
         story_spec = creative.get("object_story_spec", {})
         dest_url = _get_dest_url(story_spec)
-        funnel = _detect_funnel(dest_url, funnels) if dest_url else "unknown"
+        ad_name = ad.get("_ad_name", "")
+        campaign_name = ad.get("_campaign_name", "")
+        funnel = _detect_funnel(dest_url, funnels, ad_name, campaign_name)
 
         creative_map[ad_id] = {
             "creative_id": creative_id,
@@ -520,10 +544,17 @@ def phase_1b(
             time.sleep(0.5)
 
             try:
-                vid_data = _meta_get(
+                vid_resp = requests.get(
                     f"{META_BASE}/{video_id}",
-                    {"fields": "source,description,length", "access_token": META_TOKEN},
+                    params={"fields": "source,description,length", "access_token": META_TOKEN},
+                    timeout=30,
                 )
+                # 400 = permission issue (not transient) — skip without retrying
+                if vid_resp.status_code == 400:
+                    print(f"    [SKIP] Video {video_id}: no source access (token scope). Skipping.")
+                    continue
+                vid_resp.raise_for_status()
+                vid_data = vid_resp.json()
             except Exception as exc:
                 print(f"    [ERROR] Video metadata fetch failed: {exc}")
                 continue
