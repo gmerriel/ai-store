@@ -1,313 +1,139 @@
-# SKILL 3: Ad Image Writer
-**Version:** 2.0 | **Part of:** Creative Intelligence Suite (Skill 3 of 4)
+---
+name: writing-ad-images
+description: Reads top image ad analyses and copy concepts from Supabase. Generates 20 × 500-word JSON image prompts — 2 per ad variant (10 variants = 2 concepts × 2 bodies × 5 hooks). Each prompt is matched to its specific hook so copy and image can never mismatch. Option A uses the winning format; Option B uses a different format. Use after writing-ad-copy.
+---
+
+# Skill 3 — Writing Ad Images
+
+Generates detailed image prompts for every ad variant produced by Skill 2. Each prompt is a ~500-word JSON object describing the exact visual execution — format, setting, props, text overlay, and authenticity signals — matched precisely to its hook's emotional entry point.
 
 ---
 
-## PURPOSE
+## Prerequisites
 
-Read winning image ad analysis from Skill 1 (Supabase) and concept_ids from Skill 2. Generate 20 × 500+ word JSON image prompts — 2 per ad variant, each precisely matched to its paired hook so copy and image can never be mismatched.
-
-Does not touch the Meta API. Reads only from Supabase.
-
-**Run order:** Runs third. Requires Skills 1 and 2 to have completed.
+Run `writing-ad-copy` (Skill 2) first. This skill reads from:
+- `ad_concepts` — the 20 copy variants (concept × body × hook)
+- `ad_image_winners` — GPT-4o Vision analyses of top-performing image ads
 
 ---
 
-## THE MATHS OF 20
+## The Maths: Why 20 Prompts
 
 ```
-2 concepts (C1, C2)
-× 2 body copies per concept (A, B)
-× 5 hooks per body
-= 10 unique ad variants
+2 concepts
+  × 2 body variants (A, B)
+    × 5 hooks (H1–H5)
+      = 10 ad variants
 
-× 2 image options per variant (primary + secondary format)
-= 20 image prompts
+Each variant gets 2 image options (A and B):
+  Option A → uses the winning image format
+  Option B → uses a different proven format (pattern interrupt)
+
+10 variants × 2 images = 20 image prompts
 ```
 
-Each of the 10 ad variants gets:
-- **Image Option A** — built from the winning visual format (benchmark)
-- **Image Option B** — a different format exploring the same hook, 5-10% variation in concept
+> The 20-prompt output feeds directly into Skill 4 (video scripts). Images and scripts cover the same 10 variants — together they complete the full Creative Brief.
 
 ---
 
-## WHEN TO USE
+## Hook Alignment Rule
 
-- Runs every Monday at 4am AEDT, after Skill 2 completes
-- Can be run on-demand if Skill 2 data exists in Supabase
+**Each image prompt is locked to its specific hook.** The visual must reinforce the same emotional trigger as the hook text.
 
----
+- The first 10 words of the hook define the visual situation
+- The image prompt references those exact words to ensure alignment
+- You cannot swap an image from H1 onto H3 — the emotional entry points are different
 
-## STEP 1 — READ FROM SUPABASE
-
+This is enforced in the prompt construction:
 ```python
-# Read image analysis from Skill 1
-image_winners = supabase.table("ad_image_winners") \
-    .select("*") \
-    .eq("account_id", account_id) \
-    .eq("funnel_name", funnel_name) \
-    .eq("week_start", week_start) \
-    .order("cpl", desc=False) \
-    .execute().data
-
-# Read concept_ids and hooks from Skill 2
-concepts = supabase.table("ad_concepts") \
-    .select("*") \
-    .eq("account_id", account_id) \
-    .eq("funnel_name", funnel_name) \
-    .eq("week_start", week_start) \
-    .execute().data
-
-if not image_winners:
-    raise RuntimeError("No image winner data. Run ad-winner-extraction (Skill 1) first.")
-if not concepts:
-    raise RuntimeError("No concept data. Run ad-copy-writer (Skill 2) first.")
+for hook in concept.hooks:
+    prompt = build_image_prompt(
+        hook=hook.text,          # hook locked in
+        format_a=winner_format,  # Format A = winning format
+        format_b=alternate_format,
+        analysis=image_winner_analysis,
+    )
 ```
 
 ---
 
-## STEP 2 — IDENTIFY WINNING VISUAL PATTERNS
+## Image Option A vs Option B
 
-From `image_winners`, extract:
+| Option | Format Used | Logic |
+|--------|-------------|-------|
+| A | Winner format (from `ad_image_winners.image_format`) | Replicates the format that produced the lowest CPL |
+| B | Next best or deliberately different format | Pattern interrupt — same hook, different visual execution |
 
-```
-WINNING FORMAT: what layout type dominated the top 2-3 by CPL?
-(reddit-screenshot / whiteboard / flat-lay / phone-screenshot / etc.)
-
-AUTHENTICITY SIGNALS: what made the top image look native/organic?
-(worn tools, real UI elements, handwriting, imperfect composition, site context)
-
-TEXT ON IMAGE: what did the text in the top image say?
-(this becomes the model for what text appears in new prompts)
-
-WHAT IS ABSENT in top performers:
-(studio backgrounds, visible branding, stock-photo props, clean/staged scenes)
-
-FORMAT PRIORITY ORDER:
-1. [winning format] — benchmark for Image Option A
-2. [second format] — candidate for Image Option B
-```
+See [`references/image-formats.md`](../references/image-formats.md) for all 7 proven formats and their performance data.
 
 ---
 
-## STEP 3 — GENERATE 20 JSON IMAGE PROMPTS
+## JSON Prompt Structure
 
-For each of the 10 ad variants (C1_A_H1 through C2_B_H5), write 2 JSON prompts.
-
-### Hook alignment rule
-Each prompt must reflect its paired hook. The image should visualise the specific claim, scenario, or emotional moment in the hook text. When text appears in the image (e.g. a Reddit post headline, a whiteboard message, a sticky note), it must echo the hook's specific language — not a generic message about the offer.
-
-```
-Hook: "I worked 237 days straight. My wife went to bed alone most nights."
-→ Image text (if Reddit format): "237 days straight. Never took a day off. Lost money the whole time."
-→ NOT: "Are you undercharging for your labour?"
-
-Hook: "My apprentice asked why he's charged out at $120 but paid $34."
-→ Image text (if whiteboard): "Why am I charged at $120 but paid $34? (The real answer)"
-→ NOT: "Calculate your real labour cost"
-```
-
-### JSON prompt structure (every field required, 500+ words total)
+Each prompt is a JSON object (~500 words) with these fields:
 
 ```json
 {
-  "image_id": "PT_LABOUR_C1_A_H1_IMG_A",
-  "concept_id": "PT_LABOUR_C1_2026W10",
-  "body_ref": "A",
-  "hook_index": 1,
-  "hook_type": "continuer",
-  "image_option": "A",
-  "paired_hook_text": "[exact hook text from Skill 2]",
-
-  "image_generation_prompt": {
-
-    "format": "square 1080×1080px Facebook/Instagram ad",
-
-    "layout": "[overall composition — e.g. 'full-bleed Reddit screenshot displayed on a phone held in a tradie's hand, phone taking 80% of frame, rough concrete background barely visible']",
-
-    "primary_subject": {
-      "type": "[reddit-screenshot / whiteboard / flat-lay / phone-screenshot / etc.]",
-      "description": "[precise multi-sentence description of the hero element — what it is, what it shows, exact text visible on it, its condition, its position in frame]",
-      "text_content": {
-        "element_1": {
-          "exact_text": "[word for word — do not paraphrase]",
-          "style": "[bold/regular/handwritten/marker/digital]",
-          "colour": "[hex or precise description]",
-          "position": "[where in the element — e.g. 'post title, top of Reddit card']"
-        }
-      }
-    },
-
-    "setting": {
-      "location": "[exact environment — e.g. 'residential job site, timber frame visible, morning light']",
-      "surface": "[what objects rest on — e.g. 'aluminium ute tray, slightly dusty']",
-      "background": "[what is visible behind/around the subject — describe depth of field]",
-      "lighting": "[type / direction / colour temperature — e.g. 'harsh midday outdoor sun, hard shadows, warm 5500K']",
-      "time_of_day": "[morning / midday / evening / night]"
-    },
-
-    "props": [
-      {
-        "item": "[specific object — e.g. 'yellow Stanley tape measure']",
-        "brand_model": "[if relevant — e.g. 'Stanley FatMax 8m']",
-        "condition": "[new / worn / dirty / well-used]",
-        "position": "[where in frame]",
-        "detail": "[any markings, colour, distinguishing features]"
-      }
-    ],
-
-    "person": {
-      "present": true,
-      "visible_parts": "[hands only / forearms / torso / full body — NEVER show face unless specified]",
-      "clothing": "[specific — e.g. 'navy blue Tradie brand polo, slightly dusty, sleeves rolled to elbow']",
-      "hands": "[callused / work-worn / wedding ring / glove marks from tanned line]",
-      "action": "[what they are doing — must not block speech if this is a video staging]"
-    },
-
-    "colour_palette": [
-      "[primary colour — hex]",
-      "[secondary colour — hex]",
-      "[accent / text colour — hex]",
-      "[background tone]"
-    ],
-
-    "mood": "[the emotional feeling the image creates before any text is read — 1-2 sentences]",
-
-    "authenticity_signals": [
-      "[specific detail that makes it look organic — e.g. 'image is slightly off-centre, as if photographed hastily']",
-      "[another signal — e.g. 'tool has visible use marks and a small dent']",
-      "[another — e.g. 'phone screen has a tiny crack in the corner bezel']"
-    ],
-
-    "hook_alignment": "[1-2 sentences explaining exactly how this image reflects the specific paired hook — e.g. 'The Reddit post headline mirrors the hook's 237-day claim word-for-word, so the hook and image tell the same story simultaneously']",
-
-    "avoid": [
-      "studio lighting or backgrounds",
-      "visible brand logos or marketing materials",
-      "stock-photo composition (perfectly centred, everything pristine)",
-      "any object that doesn't belong in a working tradie's environment",
-      "[any other specific thing to avoid for this funnel/concept]"
-    ],
-
-    "ai_generation_notes": {
-      "preferred_model": "[Gemini — for photorealistic / DALL-E 3 — for graphic or typographic]",
-      "critical_details": "[the 2-3 things the AI must get exactly right or the image fails]",
-      "style_reference": "[describe the photography/design style — e.g. 'candid documentary photography, like a journalist photographed this without setup']"
-    }
-  }
+  "format": "reddit-screenshot",
+  "hook_reference": "I worked 237 days straight before I figured this out",
+  "visual_concept": "Authentic Reddit post screenshot showing a tradie's confession...",
+  "setting": {
+    "environment": "Reddit dark mode interface",
+    "subreddit": "r/AussieTrades",
+    "post_title": "Finally figured out why I was always broke despite being fully booked",
+    "upvote_count": "847",
+    "comments_visible": true
+  },
+  "username": "concreter_QL_travis",
+  "text_on_image": "Full post body text here...",
+  "authenticity_signals": [
+    "Low karma account (3 years old)",
+    "Comment count visible",
+    "Award icon present"
+  ],
+  "what_is_absent": ["brand logos", "stock photography", "studio lighting"],
+  "colour_palette": "Reddit dark mode — near-black background, orange accent",
+  "technical_specs": {
+    "aspect_ratio": "1:1 or 4:5",
+    "resolution": "1080x1080 or 1080x1350",
+    "safe_zone": "No important content in outer 10%"
+  },
+  "ai_generation_notes": "Generate as photorealistic screenshot. Font must match Reddit's default (IBM Plex Sans)."
 }
 ```
 
-### Image Option B (5-10% variation)
+---
 
-Option B uses a different visual format from Option A but tells the same hook story. The JSON is rewritten for the new format — not copy-pasted with minor tweaks.
+## Supabase Table Written
 
-```
-If Option A = Reddit screenshot
-→ Option B = Google Sheets calculator on monitor with annotation
-  (both tell the "$94 real cost vs $68 charged" story — different visual vehicle)
+**`ad_images`**
 
-If Option A = whiteboard in workshop
-→ Option B = handwritten note flat-lay on workbench
-  (both surface the same message — different medium)
-```
-
-The hook_alignment field must still hold — Option B's image must still clearly reflect the paired hook.
+| Column | Description |
+|--------|-------------|
+| `image_id` | `{variant_id}_IMG_{A|B}` |
+| `account_id` | Meta account ID |
+| `funnel_name` | Funnel key |
+| `week_start` | ISO date string |
+| `variant_id` | Matches `ad_concepts` hook variant |
+| `image_option` | `A` or `B` |
+| `image_format` | Format type string |
+| `json_prompt` | Full ~500-word JSON prompt |
+| `image_url` | Populated later (if image is generated externally) |
 
 ---
 
-## STEP 4 — SAVE TO SUPABASE
+## CLI Usage
 
-```sql
-CREATE TABLE ad_images (
-    image_id          VARCHAR(64) PRIMARY KEY,
-    -- e.g. "PT_LABOUR_C1_A_H1_IMG_A"
-    concept_id        VARCHAR(64) NOT NULL REFERENCES ad_concepts(concept_id),
-    body_ref          CHAR(1) NOT NULL,       -- 'A' or 'B'
-    hook_index        SMALLINT NOT NULL,      -- 1 to 5
-    hook_type         VARCHAR(16),            -- 'continuer' or 'explorer'
-    image_option      CHAR(1) NOT NULL,       -- 'A' (primary) or 'B' (variant)
-    paired_hook_text  TEXT,
-    json_prompt       TEXT NOT NULL,          -- full 500+ word JSON prompt
-    image_format      VARCHAR(32),            -- reddit-screenshot / whiteboard / etc.
-    image_url         TEXT,                   -- NULL until generated in Phase 2
-    model_used        VARCHAR(32),            -- 'gemini' or 'dall-e-3'
-    created_at        TIMESTAMPTZ DEFAULT NOW()
-);
+```bash
+python3 skill3_ad_image_writer.py --account profitable_tradie --funnel labour_calc --week 2026-03-10
 ```
 
 ---
 
-## STEP 5 — OUTPUT FORMAT (markdown doc for team)
+## Validation Loop
 
-```markdown
-# Image Brief — [FUNNEL] — Week of [DATE]
-
----
-
-## WINNING VISUAL ANALYSIS
-
-| Rank | Format | CPL | Core Visual Claim |
-|------|--------|-----|-------------------|
-| 1 | Reddit screenshot | $1.80 | "Real labour cost hidden from tradies" |
-| 2 | Monitor + annotation | $2.51 | "The calculator showing the real number" |
-
-**Priority format for Image A:** Reddit screenshot (best CPL — extend this)
-**Priority format for Image B:** Monitor/spreadsheet (second best — proven format)
-**What NOT to do:** [list anti-patterns from winner analysis]
-
----
-
-## IMAGE BRIEFS
-
-### PT_LABOUR_C1_A_H1_IMG_A — Continuer | Body A | Hook 1
-**Paired hook:** "[hook text]"
-**Format:** Reddit Post Screenshot
-
-\```json
-{ [500+ word JSON] }
-\```
-
-### PT_LABOUR_C1_A_H1_IMG_B — Continuer | Body A | Hook 1 (variant)
-**Paired hook:** "[same hook]"
-**Format:** Google Sheets on Monitor
-
-\```json
-{ [500+ word JSON] }
-\```
-
-[... all 20 briefs ...]
-
----
-*image_ids saved to Supabase: ad_images*
-```
-
----
-
-## PHASE 2 — IMAGE GENERATION (future)
-
-When activated, reads `ad_images` where `image_url IS NULL` and calls:
-- `Gemini 2.0 Flash` image generation API → photorealistic formats
-- `DALL-E 3` API → graphic / typographic formats
-
-Saves generated image to `/Users/atlas/reports/{client_slug}/images/` and updates `image_url` in Supabase.
-
----
-
-## EDGE CASES
-
-| Situation | Handling |
-|-----------|----------|
-| No image winner data | Error: run Skill 1 first |
-| No concept data | Error: run Skill 2 first |
-| Fewer than 2 image formats identified from winners | Use 1 format for both A and B; note in output |
-| Hook text not found in Supabase | Error: Skill 2 data incomplete |
-
----
-
-## IMPROVEMENT BACKLOG
-
-- [ ] Phase 2: wire Gemini + DALL-E APIs for auto-generation
-- [ ] Validate Option A vs Option B are genuinely different formats (not trivial variations)
-- [ ] Track which generated images get used → feed back into next week's format priority
-- [ ] Score "organic feel" of prompts before saving (checklist: no studio / no branding / has authenticity signals)
+1. Confirm `ad_images` table has exactly 20 rows per funnel (10 variants × 2 options)
+2. Spot-check 3 prompts — confirm `hook_reference` field matches the actual hook text in `ad_concepts`
+3. Confirm Image A and Image B use different `image_format` values for the same variant
+4. Check `what_is_absent` list includes "brand logos" and "stock photography" for organic-format ads
+5. Hand off JSON prompts to image generation (DALL-E 3, Midjourney, or human designer)
