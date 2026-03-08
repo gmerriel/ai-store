@@ -197,48 +197,53 @@ MANDATORY FIELDS IN EVERY PROMPT (all must be present, all must be detailed):
 
 EXAMPLE OF A CORRECT 500-WORD PROMPT (use this as your template):
 {{
-  "format": "reddit-screenshot",
+  "format": "forum-style-graphic",
   "platform": "Facebook/Instagram feed, 1:1 square, 1080x1080px",
+  "concept": "Ad creative styled as an organic community discussion post — a format that performs well because it mirrors real tradespeople sharing authentic experiences.",
   "exact_text": "Worked 237 days straight. Still barely breaking even. Here's what nobody tells you about trade pricing.",
   "text_placement": {{
-    "subreddit_label": "r/TradieLife — top left, 11pt Noto Sans, #888888",
-    "username": "u/sparky_qld_pete — next to subreddit, same size, grey",
-    "headline": "Worked 237 days straight. Still barely breaking even. Here's what nobody tells you about trade pricing. — 26pt bold Noto Sans, #1A1A1B, full width",
-    "body_preview": "First two lines of body text visible before 'read more' truncation — 13pt regular, #3C3C3C",
-    "engagement_bar": "2.4k upvotes | 318 comments | Share | Award — #FF4500 for upvote button, rest #888888, 12pt"
+    "community_label": "Fictional branded community label — top left, 11pt sans-serif, #888888 — e.g. 'Trades Business Owners Group'",
+    "username": "Fictional first-person name + trade — e.g. 'Pete — Sparky, Brisbane' — same line, grey, 11pt",
+    "headline_text": "Worked 237 days straight. Still barely breaking even. Here's what nobody tells you about trade pricing. — 26pt bold, #1A1A1B, spans full card width",
+    "body_preview": "Two lines of body text — first-person personal story tone — 13pt regular, #3C3C3C",
+    "engagement_bar": "Reaction count + comment count + share link — 12pt, grey tones, bottom of card"
   }},
-  "reddit_ui_chrome": {{
-    "card_background": "#FFFFFF",
-    "outer_wrapper": "#1A1A1B dark background, visible as 16px border all sides",
-    "upvote_button": "orange arrow #FF4500 in active/upvoted state",
-    "awards": "one gold award icon visible next to title",
-    "time_posted": "8 hours ago",
-    "note": "This must be pixel-perfect Reddit mobile UI. Any deviation kills authenticity."
+  "card_design": {{
+    "card_background": "#FFFFFF white card",
+    "outer_background": "#1A1A1B dark background as 16px border all sides",
+    "corner_radius": "8px rounded corners on card",
+    "drop_shadow": "Subtle 2px shadow, 10% black opacity, softens card edge"
   }},
-  "setting": "The screenshot fills 88% of the canvas. The dark Reddit background wraps the white card. No real-world setting — this is purely a UI screenshot mockup.",
-  "props": "None — this is a digital screenshot. No physical objects. Only Reddit interface elements.",
-  "person_description": "No person — this is a text-only Reddit post screenshot.",
-  "lighting": "Digital interface only. Flat, no shadows on the UI card itself. Slight drop shadow on the card edge (2px, 10% opacity black).",
-  "composition": "Straight-on flat lay, no perspective distortion. Screenshot centered with equal dark margins on all four sides. Aspect ratio locked to 1:1.",
-  "colour_palette": ["#FFFFFF (card)", "#1A1A1B (outer wrap)", "#FF4500 (upvote)", "#1A1A1B (headline text)", "#888888 (meta text)"],
+  "setting": "Digital graphic only. The card fills 88% of the canvas. Dark outer background shows on all four sides. No real-world photography in this format variant.",
+  "props": "No physical props. Interface-style elements only: text blocks, fictional community name, fictional first-person username, reaction icon row, comment count. All fictional — no impersonation of real platforms.",
+  "person_description": "No person visible. The copy carries all human voice. The fictional username implies a real person behind the post without showing one.",
+  "lighting": "Flat digital render — no photography lighting. White card, no internal shadows. Clean and minimal.",
+  "composition": "Perfectly centred card on dark outer background. Zero angle or perspective. Straight-on flat view. Equal margins all four sides. 1:1 locked.",
+  "colour_palette": [
+    "#FFFFFF — card background",
+    "#1A1A1B — outer wrap and headline text",
+    "#888888 — meta text (community label, username, timestamp)",
+    "#3C3C3C — body copy text",
+    "#E5E5E5 — subtle card border stroke"
+  ],
   "authenticity_signals": [
-    "Username looks like a real person (first name + trade + city abbreviation)",
-    "Subreddit is trade-specific but not a real existing subreddit (avoid lawsuits)",
-    "Upvote count in thousands — implies viral traction",
-    "Time posted is recent (hours not days)",
-    "Body text starts mid-thought — authentic personal voice",
-    "No brand watermarks or logos anywhere"
+    "Fictional username reads as a real individual tradesperson — not a brand or company name",
+    "Community label is clearly a branded group name — not impersonating any real social platform by name",
+    "Reaction count in hundreds or thousands — implies strong social traction",
+    "Timestamp shows recent post — e.g. 'posted 6 hours ago'",
+    "Body text starts mid-personal-story — first person, specific number, honest frustration or insight",
+    "No logos, brand colours, or corporate elements inside the card"
   ],
   "what_to_avoid": [
-    "Any perspective angle — must be perfectly flat/straight-on",
-    "Real Reddit subreddit names that could be confused with actual communities",
-    "Professional brand colours or gradients",
-    "Perfect symmetry or overly designed layouts",
-    "Any photos or illustrations within the Reddit card",
-    "Clean white studio backgrounds",
-    "Generic 'businessman at desk' stock imagery"
+    "Any angled or perspective view — must be flat and straight-on",
+    "Naming or visually referencing any real social platform (Reddit, Facebook, Twitter, etc.)",
+    "Stock photography or illustrations inside the card area",
+    "Corporate brand colours, gradients, or professional design polish inside the card",
+    "Any real platform logos, trademarks, or UI elements",
+    "Perfect visual symmetry that reads as designed rather than organic",
+    "Generic business stock imagery"
   ],
-  "ai_model_note": "DALL-E 3 for precise UI text rendering. Do not use Midjourney — struggles with exact text. Generate as flat digital mockup, not a photograph."
+  "ai_model_note": "DALL-E 3 for precise text rendering in UI-style graphics. Generate as flat 2D digital mockup at 1080x1080px. This is a graphic design, not a photograph."
 }}
 
 AD VARIANTS:
