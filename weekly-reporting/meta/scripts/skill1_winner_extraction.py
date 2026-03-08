@@ -42,11 +42,13 @@ LEAD_ACTION_TYPES = {
     "omni_complete_registration",
 }
 
-# Relative spend threshold: creative must be ≥ this share of funnel total spend.
-# Scales automatically: $3k/month account → 2% = $60 floor; $3.5M/month → $70k floor.
-MIN_SPEND_SHARE = 0.02
+# Minimum spend = funnel_avg_cpl × this multiplier.
+# Creative must have seen enough budget to theoretically generate ~10 conversions
+# at the funnel's own average CPL. Scales automatically with account economics.
+# e.g. avg CPL $50 → min spend $500 | avg CPL $8 → min spend $80
+MIN_SPEND_CPL_MULTIPLIER = 10
 
-# Absolute floor — safety net for very new or tiny accounts.
+# Absolute floor — safety net for very low CPL accounts.
 MIN_SPEND_FLOOR = 50.0
 
 # Number of winners to surface per funnel per asset type.
@@ -158,8 +160,9 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
 
     print(f"  Total insight rows: {len(all_insights)}")
 
-    # ── Step 2: Quick pre-filter (absolute floor only — real threshold comes after aggregation) ──
-    # Only skip truly zero-spend ads to avoid unnecessary creative API calls.
+    # ── Step 2: Quick pre-filter (absolute floor only — real threshold applied after aggregation) ──
+    # Skip genuine zero-spend / zero-conversion rows to avoid pointless creative API calls.
+    # Real threshold (funnel_avg_cpl × 10) is applied in Step 6 after creative deduplication.
     pre_qualified: List[Dict] = []
     for row in all_insights:
         spend = float(row.get("spend", 0))
@@ -172,7 +175,7 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
         row["_conversions"] = conversions
         pre_qualified.append(row)
 
-    print(f"  Ads passing absolute floor (spend≥${MIN_SPEND_FLOOR}, conversions≥1): {len(pre_qualified)}")
+    print(f"  Ads passing noise floor (spend≥${MIN_SPEND_FLOOR}, conversions≥1): {len(pre_qualified)}")
 
     # ── Step 3: Fetch creative data for each pre-qualified ad ─────────────────
     # We need creative_id (to deduplicate), asset_type, funnel URL, and creative copy.
@@ -268,35 +271,50 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
             f"avg_cpl=${bm['avg_cpl']:.2f}"
         )
 
-    # ── Step 6: Apply relative threshold + calculate winner scores ─────────────
-    # Threshold: creative spend must be ≥ max(2% of funnel spend, $50 floor)
-    # Winner score: conversions × (funnel_avg_cpl / creative_cpl)
-    #   → $50k/4100 leads @ $12 CPL (avg=$15): score = 4100 × (15/12) = 5,125  ✅
-    #   → $50/5 leads @ $10 CPL (avg=$15):     score = 5 × (15/10)   = 7.5     ✅
+    # ── Step 6: Threshold → efficiency gate → winner score ───────────────────
+    #
+    # THRESHOLD: min_spend = max(funnel_avg_cpl × 10, $50)
+    #   Creative must have seen enough budget to theoretically generate ~10 leads
+    #   at the funnel's own avg CPL. Scales automatically — no fixed dollar amounts.
+    #   e.g. avg $50 CPL → min $500 | avg $8 CPL → min $80
+    #
+    # EFFICIENCY GATE: creative_cpl must be ≤ funnel_avg_cpl
+    #   Above-average CPL creatives are excluded — don't learn from underperformers.
+    #   (Graceful fallback applied in Step 7 if no creatives pass.)
+    #
+    # WINNER SCORE: conversions × (funnel_avg_cpl / creative_cpl)²
+    #   Squaring the efficiency ratio amplifies the advantage of efficient creatives.
+    #   A: 4,100 conv @ $12 CPL (avg $15) → 4,100 × (15/12)² = 6,406  ✅ #1
+    #   C:   500 conv @ $18 CPL (avg $15) → gate fails → excluded        ✅
+    #   D:    50 conv @ $10 CPL (avg $15) →    50 × (15/10)² = 112.5    ✅ #2
 
     funnel_buckets: Dict[str, Dict[str, List[Dict]]] = {}
+    funnel_buckets_all: Dict[str, Dict[str, List[Dict]]] = {}  # fallback pool (no gate)
 
     for (creative_id, funnel), rec in registry.items():
         if funnel == "unknown" or funnel not in funnel_benchmarks:
             continue
 
         bm = funnel_benchmarks[funnel]
-        funnel_total_spend = bm["total_spend"]
         funnel_avg_cpl = bm["avg_cpl"]
 
-        # Relative spend threshold — scales with account size
-        min_spend = max(MIN_SPEND_SHARE * funnel_total_spend, MIN_SPEND_FLOOR)
-        if rec["total_spend"] < min_spend:
-            continue
         if rec["total_conversions"] == 0 or funnel_avg_cpl == 0:
             continue
 
         creative_cpl = rec["total_spend"] / rec["total_conversions"]
-        # Efficiency-weighted volume score
-        winner_score = rec["total_conversions"] * (funnel_avg_cpl / creative_cpl)
+
+        # Spend threshold — scaled to account economics
+        min_spend = max(funnel_avg_cpl * MIN_SPEND_CPL_MULTIPLIER, MIN_SPEND_FLOOR)
+        if rec["total_spend"] < min_spend:
+            continue
+
+        # Compute score for all creatives that pass the spend threshold
+        efficiency_ratio = funnel_avg_cpl / creative_cpl
+        winner_score = rec["total_conversions"] * (efficiency_ratio ** 2)
 
         rec["creative_cpl"] = round(creative_cpl, 4)
         rec["winner_score"] = round(winner_score, 4)
+        rec["beats_avg"] = creative_cpl <= funnel_avg_cpl
         # Aliases for downstream compatibility (phases 1B, 1C, master brief)
         rec["cpl"] = rec["creative_cpl"]
         rec["spend"] = rec["total_spend"]
@@ -304,23 +322,48 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
         rec["ad_id"] = rec["ad_ids"][0]
         rec["ad_name"] = rec["ad_names"][0] if rec["ad_names"] else ""
 
-        if funnel not in funnel_buckets:
-            funnel_buckets[funnel] = {"image": [], "video": []}
-        funnel_buckets[funnel][rec["asset_type"]].append(rec)
+        asset_type = rec["asset_type"]
+
+        # Fallback pool — all creatives that pass the spend threshold
+        if funnel not in funnel_buckets_all:
+            funnel_buckets_all[funnel] = {"image": [], "video": []}
+        funnel_buckets_all[funnel][asset_type].append(rec)
+
+        # Primary pool — only creatives that beat the funnel avg CPL
+        if rec["beats_avg"]:
+            if funnel not in funnel_buckets:
+                funnel_buckets[funnel] = {"image": [], "video": []}
+            funnel_buckets[funnel][asset_type].append(rec)
 
     # ── Step 7: Rank top N per funnel per asset type ──────────────────────────
+    # Use primary bucket (beats avg CPL). If empty for a given funnel/type,
+    # fall back to all qualifying creatives sorted by CPL ascending.
+    # This prevents Skills 2-4 from receiving empty input on struggling accounts.
     funnel_results: Dict[str, List[Dict]] = {}
 
-    for funnel, buckets in funnel_buckets.items():
+    all_funnels = set(funnel_buckets.keys()) | set(funnel_buckets_all.keys())
+
+    for funnel in all_funnels:
         funnel_winners: List[Dict] = []
 
         for asset_type in ("image", "video"):
-            sorted_creatives = sorted(
-                buckets[asset_type],
-                key=lambda x: -x["winner_score"],
-            )[:TOP_N]
+            primary = (funnel_buckets.get(funnel) or {}).get(asset_type, [])
+            fallback = (funnel_buckets_all.get(funnel) or {}).get(asset_type, [])
 
-            for rank, rec in enumerate(sorted_creatives, start=1):
+            if primary:
+                # Normal path — sort by winner_score descending
+                candidates = sorted(primary, key=lambda x: -x["winner_score"])[:TOP_N]
+                mode = "winner_score"
+            elif fallback:
+                # Fallback — no creative beat avg CPL; surface best of the bad by CPL asc
+                candidates = sorted(fallback, key=lambda x: x["creative_cpl"])[:TOP_N]
+                mode = "fallback (no creative beat avg CPL — sorted by CPL)"
+                print(f"  [WARN] {funnel}/{asset_type}: {mode}")
+            else:
+                candidates = []
+                mode = "none"
+
+            for rank, rec in enumerate(candidates, start=1):
                 winner_id = (
                     f"{client_slug}_{funnel}_{rec['asset_type']}_"
                     f"{rec['creative_id']}_{week_str}"
@@ -354,8 +397,9 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
         print(f"\n  [WINNERS] {funnel}:")
         for w in funnel_winners:
             campaign_count = len(set(w["ad_ids"]))
+            gate_label = "✅" if w.get("beats_avg") else "⚠️ fallback"
             print(
-                f"    #{w['rank']} [{w['asset_type']}] "
+                f"    #{w['rank']} [{w['asset_type']}] {gate_label} "
                 f"creative={w['creative_id']} | "
                 f"spend=${w['total_spend']:,.0f} across {campaign_count} ad(s) | "
                 f"conversions={w['total_conversions']:,} | "
