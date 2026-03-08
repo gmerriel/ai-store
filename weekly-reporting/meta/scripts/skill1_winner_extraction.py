@@ -1,14 +1,21 @@
 """
 skill1_winner_extraction.py — Phase 1 of the Creative Intelligence Pipeline.
 
-Pull all-time top-performing ads from Meta, transcribe videos with Whisper,
-analyse images with GPT-4o Vision. Save winners to Supabase.
+Pull all-time performance data for CURRENTLY ACTIVE ads from Meta, transcribe
+winning videos with Whisper, analyse winning images with GPT-4o Vision.
+Save winners to Supabase.
+
+ACTIVE-ONLY RULE (critical):
+  - Only ads with effective_status=ACTIVE are evaluated (ad + adset + campaign all enabled)
+  - Dead/paused/archived campaigns are completely excluded
+  - date_preset=maximum gives full historical data for those live ads
 
 Winner selection logic:
-  - Deduplicates by creative_id — same creative across multiple campaigns/adsets is aggregated
-  - Relative spend threshold: creative must account for ≥ 2% of funnel total spend (scales with account size)
-  - Winner score = conversions × (funnel_avg_cpl / creative_cpl)
-    → rewards both conversion volume AND efficiency vs. the funnel's own benchmark
+  - Deduplicates by creative_id — same creative across multiple campaigns = one aggregated record
+  - Spend threshold: max(funnel_avg_cpl × 10, $50 floor) — scales with account economics
+  - Hard efficiency gate: creative CPL must be ≤ funnel average CPL
+  - Winner score = conversions × (funnel_avg_cpl / creative_cpl)²
+    → squares the efficiency ratio, so a $4 CPL vs $8 avg scores 4× higher than 1:1
 
 Usage:
     python3 skill1_winner_extraction.py --account profitable_tradie --week 2026-03-10
@@ -28,6 +35,7 @@ import requests  # type: ignore
 from creative_config import (
     ACCOUNTS,
     META_BASE,
+    META_BATCH_URL,
     META_TOKEN,
     ensure_dir,
     get_openai_client,
@@ -55,16 +63,13 @@ MIN_SPEND_FLOOR = 50.0
 # Number of winners to surface per funnel per asset type.
 TOP_N = 5
 
-WORKSPACE_DIR = "/Users/atlas/.openclaw/workspace"
-
-
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 
 BATCH_SIZE = 50          # Meta's hard limit per batch request
-BATCH_URL = "https://graph.facebook.com/"
-# Field expansion uses { } — must be URL-encoded in batch relative_url.
-# requests.get handles this automatically; batch API strings do not.
+# BATCH_URL: no version prefix — Meta batch API uses relative_url for versioning.
+# Field expansion: { } chars must be URL-encoded (%7B / %7D) in batch relative_url.
+# requests.get handles encoding automatically; batch payload strings do not.
 CREATIVE_FIELDS_ENCODED = (
     "creative%7Bid%2Cbody%2Ctitle%2Cobject_story_spec%2Cvideo_id%2Cimage_url%2Cthumbnail_url%7D"
 )
@@ -119,7 +124,7 @@ def _meta_batch_creative_fetch(
         for attempt in range(retries):
             try:
                 resp = requests.post(
-                    BATCH_URL,
+                    META_BATCH_URL,
                     data={
                         "access_token": META_TOKEN,
                         "batch": json.dumps(batch_payload),
@@ -224,10 +229,13 @@ def _get_dest_url(story_spec: Dict[str, Any]) -> str:
 
 def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[str, List[Dict]]:
     """
-    Pull all-time ad insights, deduplicate by creative_id, score, rank winners.
+    Pull all-time insights for ACTIVE ads only, deduplicate by creative_id, score, rank winners.
 
-    Winner score = conversions × (funnel_avg_cpl / creative_cpl)
-    Threshold = max(2% of funnel spend, $50 absolute floor)
+    ACTIVE-only: effective_status=ACTIVE on the ad/adset/campaign level.
+    date_preset=maximum: all historical data for those live ads.
+
+    Winner score = conversions × (funnel_avg_cpl / creative_cpl)²
+    Threshold = max(funnel_avg_cpl × 10, $50 absolute floor)
 
     Returns:
         Dict keyed by funnel name → list of winner creative records (image + video combined).
@@ -238,13 +246,20 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
     supabase = get_supabase_client()
 
     # ── Step 1: Fetch all ad insights (all-time) ──────────────────────────────
-    print("\n[1A] Fetching all-time ad insights from Meta…")
+    print("\n[1A] Fetching all-time insights for ACTIVE ads only…")
     all_insights: List[Dict] = []
     url = f"{META_BASE}/{account_id_raw}/insights"
+    # ACTIVE-ONLY RULE: fetch all-time data but only for ads that are currently live.
+    # Paused / killed / archived campaigns are excluded — their fb.me redirect URLs
+    # can't be matched to funnels and their creative learnings are no longer relevant.
+    # effective_status="ACTIVE" at ad level covers: ad is enabled + adset enabled + campaign enabled.
     params = {
         "date_preset": "maximum",
         "level": "ad",
         "fields": "ad_id,ad_name,campaign_name,spend,actions",
+        "filtering": json.dumps([
+            {"field": "ad.effective_status", "operator": "IN", "value": ["ACTIVE"]}
+        ]),
         "limit": 500,
         "access_token": META_TOKEN,
     }

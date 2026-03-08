@@ -1,4 +1,7 @@
+# Local credentials — never commit
 .env
-*.pyc
+*.env
 __pycache__/
-/tmp/
+*.pyc
+*.pyo
+/reports/
