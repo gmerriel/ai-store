@@ -717,7 +717,7 @@ def phase_1c(
                 print(f"  [WARN] No image URL for ad {ad_id}, skipping.")
                 continue
 
-            local_path = os.path.join(WORKSPACE_DIR, f"{funnel}_{rank}_analysis.png")
+            local_path = os.path.join("/tmp", f"skill1_{funnel}_{rank}_analysis.png")
             print(f"  Downloading image for ad {ad_id} → {local_path}…")
 
             try:
