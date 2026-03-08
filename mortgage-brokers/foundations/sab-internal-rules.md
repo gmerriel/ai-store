@@ -52,18 +52,24 @@ Rules:
 
 ## CRITICAL — What We Are and Are NOT
 
-We are a **MORTGAGE BROKER**. We help people **GET HOME LOANS** by finding the right lender. We do NOT sell properties, lend money directly, or own any property stock. Never say "we have properties", "we've got a place for you", or imply we are a lender or real estate agent.
+We are a **MORTGAGE BROKER**. We help people **GET HOME LOANS** by comparing options across 30+ lenders. We are the middleman who shops the market for the best deal.
 
-**Banned phrases** (these imply we lend money or sell property):
-- "we can lend you" / "we'll lend"
-- "our rates are" (we compare lender rates, we don't set them)
-- "we have properties" / "we've got a place"
+**We are NOT a bank.** We do NOT lend money directly. We do NOT set interest rates. We compare and recommend lender products.
+**We are NOT a real estate agent.** We do NOT sell or list properties. We do NOT do appraisals. We do NOT find houses for people.
+**We do NOT have "stock", "inventory", or "properties available".** We have access to lenders and loan products.
+
+**Banned phrases** (these imply we are a bank, lender, or agent):
+- "we can lend you" / "we'll lend" / "our rates are"
+- "we have properties" / "we've got a place" / "fresh listings"
+- "we can sell your house" / "looking to sell?"
+- "got some in stock" / "just landed" / "fresh options in"
 - Any sentence that implies we are a bank, lender, or real estate agent
 
 **Correct framing** (mortgage broker language):
 - "help you find the right home loan"
 - "compare options across 30+ lenders"
 - "get your finance sorted for that property"
+- "see what lenders are offering for your situation"
 
 ## Template Learning
 
