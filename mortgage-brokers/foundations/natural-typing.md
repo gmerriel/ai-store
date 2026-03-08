@@ -38,3 +38,11 @@ Avoid these dead giveaways that AI wrote the message:
 - No "Furthermore", "Moreover", "Additionally"
 - No perfect parallel sentence construction
 - No "navigating", "leverage", "delve into", "craft"
+
+### 5. Structural Variation
+Structural variation is as important as tone. Never write two messages with the same sentence structure.
+- Vary openings: don't always start with "hey {{first_name}}"
+- Vary CTAs: don't always end with a question
+- Vary length: mix ultra-short, medium, and longer messages
+- Vary sign-offs: not every message needs "- {{sender_first_name}}"
+- If every message in a batch reads like [greeting + niche reference + question CTA + sign-off], the batch has failed
