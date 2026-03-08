@@ -355,10 +355,8 @@ def run(account_key: str, funnel: str, week_start: str) -> None:
     week_str = get_week_str(week_start)
     report_dir = account["report_dir"]
     audience = account["audience"]
-    funnel_cfg = account["funnels"].get(funnel)
-    if not funnel_cfg:
-        raise ValueError(f"Unknown funnel '{funnel}' for account '{account_key}'")
-    offer_name = funnel_cfg["offer_name"]
+    # offer_name derived from funnel slug — no hardcoded funnels dict needed.
+    offer_name = funnel.replace("_", " ").title()
 
     supabase = get_supabase_client()
     openai_client = get_openai_client()
