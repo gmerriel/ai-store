@@ -60,6 +60,11 @@ WORKSPACE_DIR = "/Users/atlas/.openclaw/workspace"
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 
+BATCH_SIZE = 50          # Meta's hard limit per batch request
+BATCH_URL = "https://graph.facebook.com/"
+CREATIVE_FIELDS = "creative{id,body,title,object_story_spec,video_id,image_url,thumbnail_url}"
+
+
 def _meta_get(url: str, params: Dict[str, Any], retries: int = 3) -> Dict[str, Any]:
     """GET a Meta Graph API endpoint with retry on transient errors."""
     for attempt in range(retries):
@@ -78,6 +83,76 @@ def _meta_get(url: str, params: Dict[str, Any], retries: int = 3) -> Dict[str, A
             else:
                 raise
     return {}
+
+
+def _meta_batch_creative_fetch(
+    ad_ids: List[str],
+    retries: int = 3,
+) -> Dict[str, Dict]:
+    """
+    Fetch creative metadata for up to len(ad_ids) ads using Meta's Batch API.
+    Sends 50 requests per HTTP call (Meta's hard limit).
+
+    Returns:
+        Dict of ad_id → creative dict (empty dict if the ad had no creative data).
+    """
+    results: Dict[str, Dict] = {}
+    total_batches = (len(ad_ids) + BATCH_SIZE - 1) // BATCH_SIZE
+
+    for batch_num, chunk_start in enumerate(range(0, len(ad_ids), BATCH_SIZE), start=1):
+        chunk = ad_ids[chunk_start: chunk_start + BATCH_SIZE]
+        print(f"  Batch {batch_num}/{total_batches} — fetching {len(chunk)} creatives…")
+
+        batch_payload = [
+            {
+                "method": "GET",
+                "relative_url": f"{ad_id}?fields={CREATIVE_FIELDS}",
+            }
+            for ad_id in chunk
+        ]
+
+        for attempt in range(retries):
+            try:
+                resp = requests.post(
+                    BATCH_URL,
+                    data={
+                        "access_token": META_TOKEN,
+                        "batch": json.dumps(batch_payload),
+                    },
+                    timeout=60,
+                )
+                if resp.status_code in (500, 502, 503, 504) and attempt < retries - 1:
+                    print(f"    [WARN] HTTP {resp.status_code} on batch — retrying in 30s…")
+                    time.sleep(30)
+                    continue
+                resp.raise_for_status()
+                batch_results = resp.json()
+                break
+            except requests.RequestException as exc:
+                if attempt < retries - 1:
+                    print(f"    [WARN] Batch request error: {exc} — retrying in 30s…")
+                    time.sleep(30)
+                else:
+                    print(f"    [ERROR] Batch failed after {retries} attempts: {exc}")
+                    batch_results = []
+                    break
+
+        for ad_id, item in zip(chunk, batch_results or []):
+            if not isinstance(item, dict):
+                continue
+            code = item.get("code", 0)
+            if code != 200:
+                continue
+            try:
+                body = json.loads(item.get("body", "{}"))
+                results[ad_id] = body.get("creative", {})
+            except (json.JSONDecodeError, AttributeError):
+                results[ad_id] = {}
+
+        # Small pause between batches to be polite to the API
+        time.sleep(1)
+
+    return results
 
 
 def _compute_conversions(ad: Dict[str, Any]) -> int:
@@ -177,28 +252,18 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
 
     print(f"  Ads passing noise floor (spend≥${MIN_SPEND_FLOOR}, conversions≥1): {len(pre_qualified)}")
 
-    # ── Step 3: Fetch creative data for each pre-qualified ad ─────────────────
-    # We need creative_id (to deduplicate), asset_type, funnel URL, and creative copy.
-    print("  Fetching creative metadata per ad…")
-    creative_map: Dict[str, Dict] = {}  # ad_id → creative metadata
+    # ── Step 3: Batch-fetch creative data (50 ads per HTTP call — Meta's hard limit) ──
+    # Replaces per-ad fetching: 2,883 individual calls → ~58 batch calls.
+    # ~19 min → ~2 min.
+    print(f"  Batch-fetching creative metadata for {len(pre_qualified)} ads (50/batch)…")
+    ad_ids = [ad["ad_id"] for ad in pre_qualified]
+    raw_creatives = _meta_batch_creative_fetch(ad_ids)
 
-    for idx, ad in enumerate(pre_qualified):
+    creative_map: Dict[str, Dict] = {}
+    for ad in pre_qualified:
         ad_id = ad["ad_id"]
-        time.sleep(0.4)
-        try:
-            result = _meta_get(
-                f"{META_BASE}/{ad_id}",
-                {
-                    "fields": "creative{id,body,title,object_story_spec,video_id,image_url,thumbnail_url}",
-                    "access_token": META_TOKEN,
-                },
-            )
-        except Exception as exc:
-            print(f"  [WARN] Creative fetch failed for ad {ad_id}: {exc}")
-            continue
-
-        creative = result.get("creative", {})
-        creative_id = creative.get("id", ad_id)  # fallback to ad_id if no creative object
+        creative = raw_creatives.get(ad_id, {})
+        creative_id = creative.get("id", ad_id)
 
         story_spec = creative.get("object_story_spec", {})
         dest_url = _get_dest_url(story_spec)
