@@ -289,7 +289,6 @@ def run_account(account_key: str, week_start: str) -> Dict[str, Any]:
     """Run the full pipeline for one account. Returns a summary dict."""
     account = ACCOUNTS[account_key]
     report_dir = account["report_dir"]
-    funnels = list(account["funnels"].keys())
 
     summary: Dict[str, Any] = {
         "account": account_key,
@@ -311,6 +310,14 @@ def run_account(account_key: str, week_start: str) -> Dict[str, Any]:
         summary["skill1"] = f"error: {exc}"
         print(f"  [ERROR] Skill 1 failed: {exc}")
         traceback.print_exc()
+
+    # ── Discover funnels from Supabase (auto-detected by Skill 1) ──
+    supabase = get_supabase_client()
+    r = supabase.table("ad_copy_winners").select("funnel_name").eq(
+        "week_start", week_start
+    ).neq("funnel_name", "unknown").execute()
+    funnels = sorted({row["funnel_name"] for row in r.data})
+    print(f"\n  Funnels detected by Skill 1: {funnels}")
 
     # ── Skills 2-4 per funnel ──
     for funnel in funnels:

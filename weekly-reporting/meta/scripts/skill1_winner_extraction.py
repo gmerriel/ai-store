@@ -34,9 +34,11 @@ import requests  # type: ignore
 
 from creative_config import (
     ACCOUNTS,
+    CONVERSION_PRIORITY_ORDER,
     META_BASE,
     META_BATCH_URL,
     META_TOKEN,
+    campaign_name_to_slug,
     ensure_dir,
     get_openai_client,
     get_supabase_client,
@@ -45,11 +47,10 @@ from creative_config import (
 
 # ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
-LEAD_ACTION_TYPES = {
-    "lead",
-    "offsite_conversion.fb_pixel_lead",
-    "omni_complete_registration",
-}
+# All conversion event types we count — imported from config.
+# Covers leads, purchases, appointments. Scoring is relative within each funnel,
+# so mixing event types across funnels is fine (each funnel benchmarks against itself).
+CONVERSION_ACTION_TYPES = set(CONVERSION_PRIORITY_ORDER)
 
 # Minimum spend = funnel_avg_cpl × this multiplier.
 # Creative must have seen enough budget to theoretically generate ~10 conversions
@@ -173,55 +174,80 @@ def _meta_batch_creative_fetch(
 
 
 def _compute_conversions(ad: Dict[str, Any]) -> int:
-    """Sum qualifying conversion actions from an ad insights row."""
+    """Sum qualifying conversion actions from an ad insights row.
+
+    Counts leads, purchases, and appointments — all in CONVERSION_ACTION_TYPES.
+    Scoring is relative within each funnel so mixing event types across funnels is safe.
+    """
     actions = ad.get("actions") or []
     return sum(
         int(float(a.get("value", 0)))
         for a in actions
-        if a.get("action_type") in LEAD_ACTION_TYPES
+        if a.get("action_type") in CONVERSION_ACTION_TYPES
     )
 
 
-def _detect_funnel(
-    url: str,
-    funnels: Dict[str, Any],
-    ad_name: str = "",
-    campaign_name: str = "",
-) -> str:
+def _fetch_campaign_funnel_map(
+    account_id: str,
+    skip_objectives: List[str],
+    skip_name_contains: List[str],
+) -> Dict[str, str]:
     """
-    Detect funnel for an ad. Priority:
-      1. base_url_contains — checked against destination URL (most reliable)
-      2. name_keywords     — checked against ad_name + campaign_name
-                            (fallback for fb.me redirect ads that hide the real URL)
+    Pull all ACTIVE campaigns for the account and build a campaign_id → funnel_slug map.
+
+    Skips campaigns by objective or name substring per account config.
+    AU&NZ and USA&CA variants of the same offer produce identical slugs,
+    so creative_id deduplication naturally merges them.
+
+    Returns:
+        Dict of campaign_id (str) → funnel_slug (str)
     """
-    clean_url = url.split("?")[0].lower()
-    combined_name = f"{ad_name} {campaign_name}".lower()
+    skip_obj = set(skip_objectives)
+    skip_names = [s.lower() for s in skip_name_contains]
 
-    for funnel_key, funnel_cfg in funnels.items():
-        # URL match (most specific — use if destination URL is available)
-        if funnel_cfg.get("base_url_contains", "").lower() in clean_url and clean_url:
-            return funnel_key
+    campaigns: List[Dict] = []
+    url = f"{META_BASE}/{account_id}/campaigns"
+    params = {
+        "effective_status": json.dumps(["ACTIVE"]),
+        "fields": "id,name,objective",
+        "limit": 200,
+        "access_token": META_TOKEN,
+    }
+    while True:
+        resp = requests.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        campaigns.extend(data.get("data", []))
+        next_url = data.get("paging", {}).get("next")
+        if not next_url:
+            break
+        url = next_url
+        params = {}
 
-    for funnel_key, funnel_cfg in funnels.items():
-        # Name fallback — for ads using fb.me redirects that hide the landing URL
-        for kw in funnel_cfg.get("name_keywords", []):
-            if kw.lower() in combined_name:
-                return funnel_key
+    funnel_map: Dict[str, str] = {}
+    skipped = []
+    for c in campaigns:
+        obj = c.get("objective", "")
+        name = c.get("name", "")
+        name_lower = name.lower()
 
-    return "unknown"
+        if obj in skip_obj:
+            skipped.append(f"  [SKIP-OBJ] {name}")
+            continue
+        if any(kw in name_lower for kw in skip_names):
+            skipped.append(f"  [SKIP-NAME] {name}")
+            continue
 
+        slug = campaign_name_to_slug(name)
+        funnel_map[c["id"]] = slug
+        print(f"  Campaign → funnel: {name!r:70}  →  {slug}")
 
-def _get_dest_url(story_spec: Dict[str, Any]) -> str:
-    """Extract destination URL from object_story_spec."""
-    try:
-        return story_spec["link_data"]["link"]
-    except (KeyError, TypeError):
-        pass
-    try:
-        return story_spec["video_data"]["call_to_action"]["value"]["link"]
-    except (KeyError, TypeError):
-        pass
-    return ""
+    if skipped:
+        print(f"\n  Skipped {len(skipped)} campaigns:")
+        for s in skipped:
+            print(s)
+
+    return funnel_map
 
 
 # ─── PHASE 1A — CREATIVE WINNER RANKING ──────────────────────────────────────
@@ -234,29 +260,41 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
     ACTIVE-only: effective_status=ACTIVE on the ad/adset/campaign level.
     date_preset=maximum: all historical data for those live ads.
 
+    Funnel auto-detection: pulls active campaigns first, slugifies name → funnel key.
+    No funnels pre-config needed — works for any client automatically.
+
     Winner score = conversions × (funnel_avg_cpl / creative_cpl)²
     Threshold = max(funnel_avg_cpl × 10, $50 absolute floor)
 
     Returns:
-        Dict keyed by funnel name → list of winner creative records (image + video combined).
+        Dict keyed by funnel slug → list of winner creative records (image + video combined).
     """
     account_id_raw = account["account_id"]
     client_slug = account["client_slug"]
-    funnels = account["funnels"]
     supabase = get_supabase_client()
+
+    # ── Step 0: Build campaign → funnel map ──────────────────────────────────
+    print("\n[0] Fetching active campaigns and building funnel map…")
+    campaign_funnel_map = _fetch_campaign_funnel_map(
+        account_id_raw,
+        account.get("skip_objectives", ["OUTCOME_ENGAGEMENT", "OUTCOME_TRAFFIC"]),
+        account.get("skip_name_contains", []),
+    )
+    print(f"\n  → {len(campaign_funnel_map)} campaigns mapped to "
+          f"{len(set(campaign_funnel_map.values()))} unique funnels: "
+          f"{sorted(set(campaign_funnel_map.values()))}")
 
     # ── Step 1: Fetch all ad insights (all-time) ──────────────────────────────
     print("\n[1A] Fetching all-time insights for ACTIVE ads only…")
     all_insights: List[Dict] = []
     url = f"{META_BASE}/{account_id_raw}/insights"
-    # ACTIVE-ONLY RULE: fetch all-time data but only for ads that are currently live.
-    # Paused / killed / archived campaigns are excluded — their fb.me redirect URLs
-    # can't be matched to funnels and their creative learnings are no longer relevant.
-    # effective_status="ACTIVE" at ad level covers: ad is enabled + adset enabled + campaign enabled.
+    # ACTIVE-ONLY: all-time historical data but only for currently live ads.
+    # effective_status=ACTIVE at ad level = ad + adset + campaign all enabled.
+    # campaign_id included so we can map to funnel slug via campaign_funnel_map.
     params = {
         "date_preset": "maximum",
         "level": "ad",
-        "fields": "ad_id,ad_name,campaign_name,spend,actions",
+        "fields": "ad_id,ad_name,campaign_id,campaign_name,spend,actions",
         "filtering": json.dumps([
             {"field": "ad.effective_status", "operator": "IN", "value": ["ACTIVE"]}
         ]),
@@ -295,8 +333,7 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
             continue
         row["_spend"] = spend
         row["_conversions"] = conversions
-        row["_ad_name"] = row.get("ad_name", "")
-        row["_campaign_name"] = row.get("campaign_name", "")
+        row["_campaign_id"] = row.get("campaign_id", "")
         pre_qualified.append(row)
 
     print(f"  Ads passing noise floor (spend≥${MIN_SPEND_FLOOR}, conversions≥1): {len(pre_qualified)}")
@@ -314,11 +351,11 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
         creative = raw_creatives.get(ad_id, {})
         creative_id = creative.get("id", ad_id)
 
-        story_spec = creative.get("object_story_spec", {})
-        dest_url = _get_dest_url(story_spec)
-        ad_name = ad.get("_ad_name", "")
-        campaign_name = ad.get("_campaign_name", "")
-        funnel = _detect_funnel(dest_url, funnels, ad_name, campaign_name)
+        # Funnel from campaign map — auto-detected, no pre-config needed.
+        # Ads whose campaign isn't in the map were filtered at campaign-fetch time
+        # (wrong objective or skip_name match) — they land as "unknown" and are excluded.
+        campaign_id = ad.get("_campaign_id", "")
+        funnel = campaign_funnel_map.get(campaign_id, "unknown")
 
         creative_map[ad_id] = {
             "creative_id": creative_id,
