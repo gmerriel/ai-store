@@ -46,3 +46,11 @@ Structural variation is as important as tone. Never write two messages with the 
 - Vary length: mix ultra-short, medium, and longer messages
 - Vary sign-offs: not every message needs "- {{sender_first_name}}"
 - If every message in a batch reads like [greeting + niche reference + question CTA + sign-off], the batch has failed
+
+### 6. Batch Anti-Repetition (CRITICAL for multi-message planning)
+When writing multiple messages for the same lead:
+- NEVER reuse the same core sentence across messages ("rates have changed" in msg 1 AND msg 5 = failure)
+- NEVER end 3+ messages with the same question pattern (e.g. "worth a chat?", "keen to chat?", "quick chat?")
+- Each message must have a DIFFERENT hook — a different fact, insight, story, or angle
+- Read back all messages before finalising — if two could be swapped without anyone noticing, rewrite one
+- At least 2 messages should have NO question at the end — just a statement, tip, or observation

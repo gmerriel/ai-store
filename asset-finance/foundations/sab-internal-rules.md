@@ -56,7 +56,11 @@ We are a **FINANCE BROKER**. We help people **GET FINANCE** for vehicles. We do 
 - "we've got some solid ute options"
 - "we have a few vehicles in your range"
 - "check out what we've got available"
+- "got some fresh stock in" / "fresh options in stock" / "new arrivals"
+- "got some fresh options" / "some good options in"
+- "just landed" / "just came in"
 - Any sentence where the subject is "we" and the object is a vehicle
+- Any sentence that implies we have inventory, stock, or physical products
 
 **Correct framing** (finance broker language):
 - "help you get finance sorted for that ute"
