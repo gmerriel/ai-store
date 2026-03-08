@@ -12,10 +12,8 @@ import argparse
 import base64
 import json
 import os
-import statistics
 import subprocess
 import time
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests  # type: ignore
@@ -37,9 +35,9 @@ LEAD_ACTION_TYPES = {
     "offsite_conversion.fb_pixel_lead",
     "omni_complete_registration",
 }
-MIN_SPEND = 50.0
-MIN_CONVERSIONS = 3
-TOP_N = 5
+MIN_SPEND = 500.0       # Must have meaningful spend to be considered proven
+MIN_CONVERSIONS = 20    # Must have volume for statistical significance
+TOP_N = 5               # Top N winners per funnel per asset type
 
 WORKSPACE_DIR = "/Users/atlas/.openclaw/workspace"
 
@@ -101,96 +99,6 @@ def _get_dest_url(story_spec: Dict[str, Any]) -> str:
     except (KeyError, TypeError):
         pass
     return ""
-
-
-# ─── QUALITY GATES ───────────────────────────────────────────────────────────
-
-
-def run_quality_checks(ads_by_funnel: Dict[str, List[Dict]], account_config: Dict) -> List[str]:
-    """
-    Run quality gate checks on the pulled ad data.
-
-    Checks performed:
-    - Learning phase detection (conversions_7d < 50)
-    - 3x kill flag (CPL > 3x funnel median, spend >= $100, not in learning phase)
-    - Budget sufficiency (flagged as TODO if daily budget not available)
-
-    Returns:
-        List of warning strings to include in output/markdown.
-
-    Rules enforced:
-    - NEVER kill or pause ads automatically — flag only
-    - Never flag learning phase ads with the 3x kill rule
-    - Never flag ads with spend < $50 or live for < 7 days
-    """
-    warnings: List[str] = []
-
-    for funnel, ads in ads_by_funnel.items():
-        # ── Learning phase check ──────────────────────────────────────────
-        for ad in ads:
-            spend = ad.get("spend", 0)
-            conversions = ad.get("conversions", 0)
-            # conversions_7d: use dedicated field if available, else approximate from total
-            conversions_7d = ad.get("conversions_7d", conversions)
-
-            if conversions_7d < 50:
-                ad["is_learning"] = True
-                warnings.append(
-                    f"[{funnel}] Ad '{ad['ad_name']}' may be in learning phase "
-                    f"(<50 conversions/7d — actual: {conversions_7d})"
-                )
-            else:
-                ad["is_learning"] = False
-
-            # Budget sufficiency: requires separate adset API call — flag as TODO
-            if spend < 50:
-                warnings.append(
-                    f"[{funnel}] Ad '{ad['ad_name']}' has insufficient spend "
-                    f"(${spend:.2f} < $50 — exclude from analysis)"
-                )
-
-        # ── 3x Kill rule check ────────────────────────────────────────────
-        # Only apply to ads with spend >= $100 AND NOT in learning phase
-        eligible = [
-            a for a in ads
-            if a.get("spend", 0) >= 100 and not a.get("is_learning", True)
-        ]
-
-        if eligible:
-            cpls = [a["cpl"] for a in eligible]
-            median_cpl = statistics.median(cpls)
-
-            for ad in eligible:
-                ad_cpl = ad.get("cpl", 0)
-                if ad_cpl > (3 * median_cpl):
-                    warnings.append(
-                        f"[{funnel}] ⚠️ 3x KILL FLAG: '{ad['ad_name']}' "
-                        f"CPL ${ad_cpl:.2f} vs funnel median ${median_cpl:.2f} "
-                        f"(spend: ${ad.get('spend', 0):.2f}) — "
-                        f"review with media buyer before pausing"
-                    )
-
-        # ── Mixed objective warning ───────────────────────────────────────
-        objectives = {a.get("campaign_objective", "") for a in ads if a.get("campaign_objective")}
-        if len(objectives) > 1:
-            warnings.append(
-                f"[{funnel}] WARNING: Mixed campaign objectives detected "
-                f"({', '.join(objectives)}) — CPL comparisons within funnel may be misleading"
-            )
-
-    return warnings
-
-
-def format_quality_warnings_markdown(warnings: List[str]) -> str:
-    """Format quality gate warnings as a markdown section."""
-    if not warnings:
-        return "\n## ✅ Quality Gates\n\nNo warnings — all checks passed.\n"
-
-    lines = ["\n## ⚠️ Quality Gate Warnings\n"]
-    for w in warnings:
-        lines.append(f"- {w}")
-    lines.append("")
-    return "\n".join(lines)
 
 
 # ─── PHASE 1A — AD COPY WINNERS ──────────────────────────────────────────────
@@ -315,7 +223,12 @@ def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[st
         funnel_winners: List[Dict] = []
 
         for asset_type in ("image", "video"):
-            sorted_ads = sorted(buckets[asset_type], key=lambda x: x["cpl"])[:TOP_N]
+            # Sort by conversions descending (most proven), then CPL ascending as tiebreaker.
+            # An ad with 4,100 leads at $12 CPL outranks one with 5 leads at $10 CPL.
+            sorted_ads = sorted(
+                buckets[asset_type],
+                key=lambda x: (-x["conversions"], x["cpl"]),
+            )[:TOP_N]
             for rank, ad_rec in enumerate(sorted_ads, start=1):
                 winner_id = f"{client_slug}_{funnel}_{ad_rec['asset_type']}_{ad_rec['ad_id']}_{week_str}"
                 row = {
@@ -366,7 +279,7 @@ def phase_1b(
     for funnel, ads in funnel_results.items():
         video_ads = sorted(
             [a for a in ads if a["asset_type"] == "video"],
-            key=lambda x: x["cpl"],
+            key=lambda x: (-x["conversions"], x["cpl"]),
         )[:TOP_N]
 
         if not video_ads:
@@ -521,7 +434,7 @@ def phase_1c(
     for funnel, ads in funnel_results.items():
         image_ads = sorted(
             [a for a in ads if a["asset_type"] == "image"],
-            key=lambda x: x["cpl"],
+            key=lambda x: (-x["conversions"], x["cpl"]),
         )[:TOP_N]
 
         if not image_ads:
@@ -642,42 +555,6 @@ def run(account_key: str, week_start: str) -> None:
     print(f"{'='*60}")
 
     funnel_results = phase_1a(account, week_start, week_str)
-
-    # ── Quality gate checks ──────────────────────────────────────────────────
-    print(f"\n[QUALITY GATES] Running quality checks…")
-    warnings = run_quality_checks(funnel_results, account)
-    if warnings:
-        print(f"  {len(warnings)} warning(s) found:")
-        for w in warnings:
-            print(f"    {w}")
-    else:
-        print("  ✅ No warnings — all quality checks passed.")
-
-    # Persist warnings to Supabase (on quality_warnings table if it exists)
-    if warnings:
-        supabase = get_supabase_client()
-        for w in warnings:
-            try:
-                supabase.table("quality_warnings").insert({
-                    "account_id": account["account_id"],
-                    "week_start": week_start,
-                    "warning": w,
-                    "created_at": datetime.utcnow().isoformat(),
-                }).execute()
-            except Exception:
-                pass  # Table may not exist — warnings are printed to stdout regardless
-
-    # Write warnings markdown to report dir
-    warnings_md_path = os.path.join(account["report_dir"], f"quality_warnings_{week_str}.md")
-    try:
-        ensure_dir(account["report_dir"])
-        with open(warnings_md_path, "w", encoding="utf-8") as f:
-            f.write(f"# Quality Gate Warnings — {account_key} — {week_start}\n")
-            f.write(format_quality_warnings_markdown(warnings))
-        print(f"  [MD] Quality warnings written: {warnings_md_path}")
-    except Exception as exc:
-        print(f"  [WARN] Could not write quality warnings file: {exc}")
-
     phase_1b(account, funnel_results, week_start, week_str)
     phase_1c(account, funnel_results, week_start, week_str)
 
