@@ -4,6 +4,12 @@ skill1_winner_extraction.py — Phase 1 of the Creative Intelligence Pipeline.
 Pull all-time top-performing ads from Meta, transcribe videos with Whisper,
 analyse images with GPT-4o Vision. Save winners to Supabase.
 
+Winner selection logic:
+  - Deduplicates by creative_id — same creative across multiple campaigns/adsets is aggregated
+  - Relative spend threshold: creative must account for ≥ 2% of funnel total spend (scales with account size)
+  - Winner score = conversions × (funnel_avg_cpl / creative_cpl)
+    → rewards both conversion volume AND efficiency vs. the funnel's own benchmark
+
 Usage:
     python3 skill1_winner_extraction.py --account profitable_tradie --week 2026-03-10
 """
@@ -14,7 +20,7 @@ import json
 import os
 import subprocess
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests  # type: ignore
 
@@ -35,22 +41,30 @@ LEAD_ACTION_TYPES = {
     "offsite_conversion.fb_pixel_lead",
     "omni_complete_registration",
 }
-MIN_SPEND = 500.0       # Must have meaningful spend to be considered proven
-MIN_CONVERSIONS = 20    # Must have volume for statistical significance
-TOP_N = 5               # Top N winners per funnel per asset type
+
+# Relative spend threshold: creative must be ≥ this share of funnel total spend.
+# Scales automatically: $3k/month account → 2% = $60 floor; $3.5M/month → $70k floor.
+MIN_SPEND_SHARE = 0.02
+
+# Absolute floor — safety net for very new or tiny accounts.
+MIN_SPEND_FLOOR = 50.0
+
+# Number of winners to surface per funnel per asset type.
+TOP_N = 5
 
 WORKSPACE_DIR = "/Users/atlas/.openclaw/workspace"
+
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 
 def _meta_get(url: str, params: Dict[str, Any], retries: int = 3) -> Dict[str, Any]:
-    """GET a Meta Graph API endpoint with retry on 4xx/5xx."""
+    """GET a Meta Graph API endpoint with retry on transient errors."""
     for attempt in range(retries):
         try:
             resp = requests.get(url, params=params, timeout=30)
             if resp.status_code in (400, 500, 502, 503, 504) and attempt < retries - 1:
-                print(f"    [WARN] HTTP {resp.status_code} from Meta — retrying in 30s…")
+                print(f"    [WARN] HTTP {resp.status_code} — retrying in 30s…")
                 time.sleep(30)
                 continue
             resp.raise_for_status()
@@ -64,19 +78,14 @@ def _meta_get(url: str, params: Dict[str, Any], retries: int = 3) -> Dict[str, A
     return {}
 
 
-def _compute_cpl(ad: Dict[str, Any]) -> Tuple[float, int]:
-    """Return (cpl, conversions) for an ad row; raises ValueError if not qualifying."""
+def _compute_conversions(ad: Dict[str, Any]) -> int:
+    """Sum qualifying conversion actions from an ad insights row."""
     actions = ad.get("actions") or []
-    conversions = sum(
+    return sum(
         int(float(a.get("value", 0)))
         for a in actions
         if a.get("action_type") in LEAD_ACTION_TYPES
     )
-    if conversions == 0:
-        raise ValueError("no qualifying actions")
-    spend = float(ad.get("spend", 0))
-    cpl = spend / conversions
-    return cpl, conversions
 
 
 def _detect_funnel(url: str, funnels: Dict[str, Any]) -> str:
@@ -101,161 +110,258 @@ def _get_dest_url(story_spec: Dict[str, Any]) -> str:
     return ""
 
 
-# ─── PHASE 1A — AD COPY WINNERS ──────────────────────────────────────────────
+# ─── PHASE 1A — CREATIVE WINNER RANKING ──────────────────────────────────────
 
 
 def phase_1a(account: Dict[str, Any], week_start: str, week_str: str) -> Dict[str, List[Dict]]:
     """
-    Pull all-time ad insights, filter, rank by CPL, upsert to Supabase.
+    Pull all-time ad insights, deduplicate by creative_id, score, rank winners.
+
+    Winner score = conversions × (funnel_avg_cpl / creative_cpl)
+    Threshold = max(2% of funnel spend, $50 absolute floor)
 
     Returns:
-        Dict keyed by funnel name; each value is a list of qualifying ad dicts
-        (image and video combined, sorted by CPL).
+        Dict keyed by funnel name → list of winner creative records (image + video combined).
     """
-    account_id_raw = account["account_id"]  # e.g. "act_559512967808213"
+    account_id_raw = account["account_id"]
     client_slug = account["client_slug"]
     funnels = account["funnels"]
-
     supabase = get_supabase_client()
 
+    # ── Step 1: Fetch all ad insights (all-time) ──────────────────────────────
     print("\n[1A] Fetching all-time ad insights from Meta…")
-
+    all_insights: List[Dict] = []
     url = f"{META_BASE}/{account_id_raw}/insights"
     params = {
         "date_preset": "maximum",
         "level": "ad",
-        "fields": "ad_id,ad_name,adset_name,campaign_name,spend,impressions,clicks,actions,cost_per_action_type",
+        "fields": "ad_id,ad_name,spend,actions",
         "limit": 500,
         "access_token": META_TOKEN,
     }
-
-    all_ads: List[Dict[str, Any]] = []
     page = 0
     while True:
         page += 1
-        print(f"  Fetching page {page}…")
+        print(f"  Fetching insights page {page}…")
         try:
             data = _meta_get(url, params)
         except Exception as exc:
-            print(f"  [ERROR] Failed to fetch insights page {page}: {exc}")
+            print(f"  [ERROR] Insights fetch failed on page {page}: {exc}")
             break
-
-        all_ads.extend(data.get("data", []))
+        all_insights.extend(data.get("data", []))
         time.sleep(0.5)
-
         next_url = data.get("paging", {}).get("next")
         if not next_url:
             break
-        # next URL already has all params baked in
         url = next_url
         params = {}
 
-    print(f"  Total ad rows fetched: {len(all_ads)}")
+    print(f"  Total insight rows: {len(all_insights)}")
 
-    # Filter and compute CPL
-    qualifying: List[Dict[str, Any]] = []
-    for ad in all_ads:
-        spend = float(ad.get("spend", 0))
-        if spend < MIN_SPEND:
+    # ── Step 2: Quick pre-filter (absolute floor only — real threshold comes after aggregation) ──
+    # Only skip truly zero-spend ads to avoid unnecessary creative API calls.
+    pre_qualified: List[Dict] = []
+    for row in all_insights:
+        spend = float(row.get("spend", 0))
+        if spend < MIN_SPEND_FLOOR:
             continue
-        try:
-            cpl, conversions = _compute_cpl(ad)
-        except ValueError:
+        conversions = _compute_conversions(row)
+        if conversions == 0:
             continue
-        if conversions < MIN_CONVERSIONS:
-            continue
-        ad["_cpl"] = cpl
-        ad["_conversions"] = conversions
-        qualifying.append(ad)
+        row["_spend"] = spend
+        row["_conversions"] = conversions
+        pre_qualified.append(row)
 
-    print(f"  Qualifying ads (spend≥{MIN_SPEND}, conversions≥{MIN_CONVERSIONS}): {len(qualifying)}")
+    print(f"  Ads passing absolute floor (spend≥${MIN_SPEND_FLOOR}, conversions≥1): {len(pre_qualified)}")
 
-    # Pull creative for each qualifying ad
-    funnel_buckets: Dict[str, Dict[str, List[Dict]]] = {}  # funnel → {image: [], video: []}
+    # ── Step 3: Fetch creative data for each pre-qualified ad ─────────────────
+    # We need creative_id (to deduplicate), asset_type, funnel URL, and creative copy.
+    print("  Fetching creative metadata per ad…")
+    creative_map: Dict[str, Dict] = {}  # ad_id → creative metadata
 
-    for idx, ad in enumerate(qualifying):
+    for idx, ad in enumerate(pre_qualified):
         ad_id = ad["ad_id"]
-        print(f"  [{idx+1}/{len(qualifying)}] Pulling creative for ad {ad_id}…")
-        time.sleep(0.5)
-
+        time.sleep(0.4)
         try:
-            creative_data = _meta_get(
+            result = _meta_get(
                 f"{META_BASE}/{ad_id}",
                 {
-                    "fields": "creative{body,title,object_story_spec,asset_feed_spec,video_id,image_url,thumbnail_url}",
+                    "fields": "creative{id,body,title,object_story_spec,video_id,image_url,thumbnail_url}",
                     "access_token": META_TOKEN,
                 },
             )
         except Exception as exc:
-            print(f"    [ERROR] Creative fetch failed: {exc}")
+            print(f"  [WARN] Creative fetch failed for ad {ad_id}: {exc}")
             continue
 
-        creative = creative_data.get("creative", {})
-        video_id = creative.get("video_id")
-        asset_type = "video" if video_id else "image"
+        creative = result.get("creative", {})
+        creative_id = creative.get("id", ad_id)  # fallback to ad_id if no creative object
 
         story_spec = creative.get("object_story_spec", {})
         dest_url = _get_dest_url(story_spec)
         funnel = _detect_funnel(dest_url, funnels) if dest_url else "unknown"
 
-        record = {
-            "ad_id": ad_id,
-            "ad_name": ad.get("ad_name", ""),
-            "asset_type": asset_type,
-            "cpl": ad["_cpl"],
-            "spend": float(ad.get("spend", 0)),
-            "conversions": ad["_conversions"],
+        creative_map[ad_id] = {
+            "creative_id": creative_id,
+            "asset_type": "video" if creative.get("video_id") else "image",
+            "video_id": creative.get("video_id"),
+            "image_url": creative.get("image_url") or creative.get("thumbnail_url", ""),
             "headline": creative.get("title", ""),
             "body_copy": creative.get("body", ""),
-            "video_id": video_id,
-            "image_url": creative.get("image_url") or creative.get("thumbnail_url", ""),
             "funnel": funnel,
         }
 
+    print(f"  Creative metadata fetched for {len(creative_map)} ads.")
+
+    # ── Step 4: Aggregate spend + conversions by (creative_id, funnel) ────────
+    # Same creative running in 3 campaigns for 3 audiences → one aggregated record.
+    print("  Aggregating performance by creative…")
+    registry: Dict[Tuple[str, str], Dict] = {}  # (creative_id, funnel) → aggregated record
+
+    for ad in pre_qualified:
+        ad_id = ad["ad_id"]
+        c = creative_map.get(ad_id)
+        if not c:
+            continue
+        key = (c["creative_id"], c["funnel"])
+        if key not in registry:
+            registry[key] = {
+                "creative_id": c["creative_id"],
+                "funnel": c["funnel"],
+                "asset_type": c["asset_type"],
+                "video_id": c.get("video_id"),
+                "image_url": c["image_url"],
+                "headline": c["headline"],
+                "body_copy": c["body_copy"],
+                "total_spend": 0.0,
+                "total_conversions": 0,
+                "ad_ids": [],
+                "ad_names": [],
+            }
+        rec = registry[key]
+        rec["total_spend"] += ad["_spend"]
+        rec["total_conversions"] += ad["_conversions"]
+        rec["ad_ids"].append(ad_id)
+        rec["ad_names"].append(ad.get("ad_name", ""))
+
+    print(f"  Unique (creative × funnel) combinations: {len(registry)}")
+
+    # ── Step 5: Calculate per-funnel benchmarks ───────────────────────────────
+    # Benchmark = funnel's own total spend and avg CPL — the account's internal truth.
+    funnel_benchmarks: Dict[str, Dict] = {}
+    for (creative_id, funnel), rec in registry.items():
+        if funnel == "unknown":
+            continue
+        if funnel not in funnel_benchmarks:
+            funnel_benchmarks[funnel] = {"total_spend": 0.0, "total_conversions": 0}
+        funnel_benchmarks[funnel]["total_spend"] += rec["total_spend"]
+        funnel_benchmarks[funnel]["total_conversions"] += rec["total_conversions"]
+
+    for funnel, bm in funnel_benchmarks.items():
+        bm["avg_cpl"] = (
+            bm["total_spend"] / bm["total_conversions"] if bm["total_conversions"] > 0 else 0.0
+        )
+        print(
+            f"  Funnel benchmark [{funnel}]: "
+            f"total_spend=${bm['total_spend']:,.0f} | "
+            f"total_conversions={bm['total_conversions']:,} | "
+            f"avg_cpl=${bm['avg_cpl']:.2f}"
+        )
+
+    # ── Step 6: Apply relative threshold + calculate winner scores ─────────────
+    # Threshold: creative spend must be ≥ max(2% of funnel spend, $50 floor)
+    # Winner score: conversions × (funnel_avg_cpl / creative_cpl)
+    #   → $50k/4100 leads @ $12 CPL (avg=$15): score = 4100 × (15/12) = 5,125  ✅
+    #   → $50/5 leads @ $10 CPL (avg=$15):     score = 5 × (15/10)   = 7.5     ✅
+
+    funnel_buckets: Dict[str, Dict[str, List[Dict]]] = {}
+
+    for (creative_id, funnel), rec in registry.items():
+        if funnel == "unknown" or funnel not in funnel_benchmarks:
+            continue
+
+        bm = funnel_benchmarks[funnel]
+        funnel_total_spend = bm["total_spend"]
+        funnel_avg_cpl = bm["avg_cpl"]
+
+        # Relative spend threshold — scales with account size
+        min_spend = max(MIN_SPEND_SHARE * funnel_total_spend, MIN_SPEND_FLOOR)
+        if rec["total_spend"] < min_spend:
+            continue
+        if rec["total_conversions"] == 0 or funnel_avg_cpl == 0:
+            continue
+
+        creative_cpl = rec["total_spend"] / rec["total_conversions"]
+        # Efficiency-weighted volume score
+        winner_score = rec["total_conversions"] * (funnel_avg_cpl / creative_cpl)
+
+        rec["creative_cpl"] = round(creative_cpl, 4)
+        rec["winner_score"] = round(winner_score, 4)
+        # Aliases for downstream compatibility (phases 1B, 1C, master brief)
+        rec["cpl"] = rec["creative_cpl"]
+        rec["spend"] = rec["total_spend"]
+        rec["conversions"] = rec["total_conversions"]
+        rec["ad_id"] = rec["ad_ids"][0]
+        rec["ad_name"] = rec["ad_names"][0] if rec["ad_names"] else ""
+
         if funnel not in funnel_buckets:
             funnel_buckets[funnel] = {"image": [], "video": []}
-        funnel_buckets[funnel][asset_type].append(record)
+        funnel_buckets[funnel][rec["asset_type"]].append(rec)
 
-    # Rank and upsert top 5 per funnel per asset type
+    # ── Step 7: Rank top N per funnel per asset type ──────────────────────────
     funnel_results: Dict[str, List[Dict]] = {}
 
     for funnel, buckets in funnel_buckets.items():
         funnel_winners: List[Dict] = []
 
         for asset_type in ("image", "video"):
-            # Sort by conversions descending (most proven), then CPL ascending as tiebreaker.
-            # An ad with 4,100 leads at $12 CPL outranks one with 5 leads at $10 CPL.
-            sorted_ads = sorted(
+            sorted_creatives = sorted(
                 buckets[asset_type],
-                key=lambda x: (-x["conversions"], x["cpl"]),
+                key=lambda x: -x["winner_score"],
             )[:TOP_N]
-            for rank, ad_rec in enumerate(sorted_ads, start=1):
-                winner_id = f"{client_slug}_{funnel}_{ad_rec['asset_type']}_{ad_rec['ad_id']}_{week_str}"
+
+            for rank, rec in enumerate(sorted_creatives, start=1):
+                winner_id = (
+                    f"{client_slug}_{funnel}_{rec['asset_type']}_"
+                    f"{rec['creative_id']}_{week_str}"
+                )
                 row = {
                     "winner_id": winner_id,
                     "account_id": account_id_raw,
                     "funnel_name": funnel,
                     "week_start": week_start,
-                    "ad_id": ad_rec["ad_id"],
-                    "ad_name": ad_rec["ad_name"],
-                    "asset_type": ad_rec["asset_type"],
-                    "cpl": round(ad_rec["cpl"], 4),
-                    "spend": round(ad_rec["spend"], 2),
-                    "conversions": ad_rec["conversions"],
-                    "headline": ad_rec["headline"],
-                    "body_copy": ad_rec["body_copy"],
+                    "ad_id": rec["ad_id"],
+                    "ad_name": rec["ad_name"],
+                    "asset_type": rec["asset_type"],
+                    "cpl": round(rec["creative_cpl"], 4),
+                    "spend": round(rec["total_spend"], 2),
+                    "conversions": rec["total_conversions"],
+                    "headline": rec["headline"],
+                    "body_copy": rec["body_copy"],
                     "rank": rank,
                 }
                 try:
                     supabase.table("ad_copy_winners").upsert(row, on_conflict="winner_id").execute()
-                    print(f"    [DB] Upserted ad_copy_winners: {winner_id}")
                 except Exception as exc:
                     print(f"    [ERROR] Supabase upsert failed for {winner_id}: {exc}")
 
-                ad_rec["rank"] = rank
-                funnel_winners.append(ad_rec)
+                rec["rank"] = rank
+                funnel_winners.append(rec)
 
         funnel_results[funnel] = funnel_winners
+
+        # Print funnel summary
+        print(f"\n  [WINNERS] {funnel}:")
+        for w in funnel_winners:
+            campaign_count = len(set(w["ad_ids"]))
+            print(
+                f"    #{w['rank']} [{w['asset_type']}] "
+                f"creative={w['creative_id']} | "
+                f"spend=${w['total_spend']:,.0f} across {campaign_count} ad(s) | "
+                f"conversions={w['total_conversions']:,} | "
+                f"cpl=${w['creative_cpl']:.2f} | "
+                f"score={w['winner_score']:.1f}"
+            )
 
     return funnel_results
 
@@ -277,13 +383,10 @@ def phase_1b(
     print("\n[1B] Transcribing video ads…")
 
     for funnel, ads in funnel_results.items():
-        video_ads = sorted(
-            [a for a in ads if a["asset_type"] == "video"],
-            key=lambda x: (-x["conversions"], x["cpl"]),
-        )[:TOP_N]
+        video_ads = [a for a in ads if a["asset_type"] == "video"]
 
         if not video_ads:
-            print(f"  Funnel '{funnel}': no video ads to transcribe.")
+            print(f"  Funnel '{funnel}': no video winners to transcribe.")
             continue
 
         for ad_rec in video_ads:
@@ -326,7 +429,7 @@ def phase_1b(
                 print(f"    [WARN] File too small ({file_size} bytes) — skipping transcription.")
                 continue
 
-            print(f"    Transcribing with Whisper…")
+            print("    Transcribing with Whisper…")
             try:
                 subprocess.run(
                     [
@@ -344,7 +447,7 @@ def phase_1b(
                 print(f"    [ERROR] Whisper failed: {exc}")
                 continue
             except FileNotFoundError:
-                print("    [ERROR] whisper CLI not found. Install with: pip install openai-whisper")
+                print("    [ERROR] whisper CLI not found. Install: pip install openai-whisper")
                 continue
 
             transcript_path = f"/tmp/vid_{ad_id}.txt"
@@ -355,7 +458,6 @@ def phase_1b(
             with open(transcript_path, "r", encoding="utf-8") as f:
                 transcript = f.read().strip()
 
-            # Tag sections
             sentences = [s.strip() for s in transcript.replace("\n", " ").split(".") if s.strip()]
             hook_text = ". ".join(sentences[:2]) + ("." if len(sentences) >= 2 else "")
             hook_words = transcript.split()
@@ -369,7 +471,6 @@ def phase_1b(
                 if any(kw in last.lower() for kw in cta_keywords):
                     cta_text = last + "."
 
-            # Body = between hook and cta
             hook_end = len(". ".join(sentences[:2])) + 1 if len(sentences) >= 2 else 0
             cta_start = transcript.rfind(cta_text) if cta_text else len(transcript)
             body_text = transcript[hook_end:cta_start].strip()
@@ -393,7 +494,9 @@ def phase_1b(
                 "word_count": word_count,
             }
             try:
-                supabase.table("ad_video_transcriptions").upsert(row, on_conflict="transcription_id").execute()
+                supabase.table("ad_video_transcriptions").upsert(
+                    row, on_conflict="transcription_id"
+                ).execute()
                 print(f"    [DB] Upserted ad_video_transcriptions: {transcription_id}")
             except Exception as exc:
                 print(f"    [ERROR] Supabase upsert failed: {exc}")
@@ -432,13 +535,10 @@ def phase_1c(
     )
 
     for funnel, ads in funnel_results.items():
-        image_ads = sorted(
-            [a for a in ads if a["asset_type"] == "image"],
-            key=lambda x: (-x["conversions"], x["cpl"]),
-        )[:TOP_N]
+        image_ads = [a for a in ads if a["asset_type"] == "image"]
 
         if not image_ads:
-            print(f"  Funnel '{funnel}': no image ads to analyse.")
+            print(f"  Funnel '{funnel}': no image winners to analyse.")
             continue
 
         for ad_rec in image_ads:
@@ -463,13 +563,13 @@ def phase_1c(
                 continue
 
             if os.path.getsize(local_path) < 20 * 1024:
-                print(f"    [WARN] Image too small — skipping analysis.")
+                print("    [WARN] Image too small — skipping analysis.")
                 continue
 
             with open(local_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode("utf-8")
 
-            print(f"    Calling GPT-4o Vision…")
+            print("    Calling GPT-4o Vision…")
             try:
                 response = openai_client.chat.completions.create(
                     model="gpt-4o",
@@ -493,16 +593,14 @@ def phase_1c(
 
             raw_content = response.choices[0].message.content or ""
 
-            # Try to parse JSON from the response
             try:
-                # Strip markdown code fences if present
                 clean = raw_content.strip()
                 if clean.startswith("```"):
                     clean = "\n".join(clean.split("\n")[1:])
                     clean = clean.rsplit("```", 1)[0].strip()
                 analysis = json.loads(clean)
             except json.JSONDecodeError:
-                print(f"    [WARN] GPT-4o returned non-JSON — storing as raw string.")
+                print("    [WARN] GPT-4o returned non-JSON — storing raw.")
                 analysis = {"raw": raw_content}
 
             image_winner_id = f"{client_slug}_{funnel}_img_{ad_id}_{week_str}"
@@ -528,7 +626,9 @@ def phase_1c(
                 "full_analysis": json.dumps(analysis),
             }
             try:
-                supabase.table("ad_image_winners").upsert(row, on_conflict="image_winner_id").execute()
+                supabase.table("ad_image_winners").upsert(
+                    row, on_conflict="image_winner_id"
+                ).execute()
                 print(f"    [DB] Upserted ad_image_winners: {image_winner_id}")
             except Exception as exc:
                 print(f"    [ERROR] Supabase upsert failed: {exc}")
@@ -542,7 +642,7 @@ def phase_1c(
 def run(account_key: str, week_start: str) -> None:
     """Run all three phases for the given account and week."""
     if account_key not in ACCOUNTS:
-        raise ValueError(f"Unknown account key: {account_key}. Available: {list(ACCOUNTS.keys())}")
+        raise ValueError(f"Unknown account: {account_key}. Available: {list(ACCOUNTS.keys())}")
 
     account = ACCOUNTS[account_key]
     week_str = get_week_str(week_start)
@@ -558,15 +658,15 @@ def run(account_key: str, week_start: str) -> None:
     phase_1b(account, funnel_results, week_start, week_str)
     phase_1c(account, funnel_results, week_start, week_str)
 
-    total_ads = sum(len(v) for v in funnel_results.values())
+    total_creatives = sum(len(v) for v in funnel_results.values())
     print(f"\n{'='*60}")
     print(f"  Skill 1 COMPLETE")
-    print(f"  Funnels processed : {len(funnel_results)}")
-    print(f"  Total winner ads  : {total_ads}")
-    for funnel, ads in funnel_results.items():
-        images = [a for a in ads if a["asset_type"] == "image"]
-        videos = [a for a in ads if a["asset_type"] == "video"]
-        print(f"    {funnel}: {len(images)} images, {len(videos)} videos")
+    print(f"  Funnels processed  : {len(funnel_results)}")
+    print(f"  Total winner creatives : {total_creatives}")
+    for funnel, creatives in funnel_results.items():
+        images = [c for c in creatives if c["asset_type"] == "image"]
+        videos = [c for c in creatives if c["asset_type"] == "video"]
+        print(f"    {funnel}: {len(images)} image(s), {len(videos)} video(s)")
     print(f"{'='*60}")
 
 
