@@ -50,3 +50,12 @@ Never use the same CTA phrase twice in a batch. Avoid: "worth a chat?", "happy t
 - Escalate CTA strength gradually (soft → specific time offer → booking)
 - Each message should address a different aspect of their decision
 - Study the template examples — learn from what's working, not just the words
+
+## Message Quality Rules
+
+- Every message MUST have a CTA — question, soft suggestion, or implied next step. No dead-end tips.
+- Reference actual niche_data values: vehicle_type, budget_range, occupation, new_or_used, credit_situation
+- Hedge all market/rate claims — "looks like", "I reckon", never state as fact
+- Social proof must mention FINANCE: BAD "sorted a bloke with a ute" GOOD "sorted a bloke's finance for a ute"
+- Permission = ask about their vehicle interest ("still keen on that used ute?"), NOT about stopping messages
+- Emails must be 20-80 words body — not a text message pasted into email format

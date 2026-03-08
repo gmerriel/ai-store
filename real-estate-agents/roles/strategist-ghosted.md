@@ -48,3 +48,12 @@ Never use the same CTA phrase twice in a batch. Avoid: "worth a chat?", "happy t
 - Vary angles, structure, CTA, and length across every message
 - Each message stands alone — pattern interrupt is key
 - Study the template examples — learn from what's working, not just the words
+
+## Message Quality Rules
+
+- Every message MUST have a CTA — question, soft suggestion, or implied next step. No dead-end tips.
+- Reference actual niche_data values: suburb, property_type, sell_timeline, bedrooms_bathrooms, price_expectation
+- Hedge all market/price claims — "looks like", "I reckon", never state as fact
+- Social proof must mention LISTING: BAD "sold a 3-bedder" GOOD "listed a 3-bedder and it sold above reserve"
+- Permission = ask about their selling interest ("still thinking about selling?"), NOT about stopping messages
+- Emails must be 20-80 words body — not a text message pasted into email format

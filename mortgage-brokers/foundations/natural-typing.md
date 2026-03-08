@@ -54,3 +54,11 @@ When writing multiple messages for the same lead:
 - Each message must have a DIFFERENT hook — a different fact, insight, story, or angle
 - Read back all messages before finalising — if two could be swapped without anyone noticing, rewrite one
 - At least 2 messages should have NO question at the end — just a statement, tip, or observation
+
+### 7. Email vs SMS Length Rules
+SMS and email are DIFFERENT channels and must FEEL different:
+- SMS: 1-2 sentences, punchy (this is correct already)
+- EMAIL body: minimum 20 words, maximum 80 words (excluding subject line and sign-off)
+- An email that reads like a text message pasted into email = FAILURE
+- Emails should have substance — a more complete thought, context, or genuine value
+- Do NOT pad with filler — the extra length should come from real content

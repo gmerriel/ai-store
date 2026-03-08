@@ -49,3 +49,12 @@ Never use the same CTA phrase twice in a batch. Avoid: "worth a chat?", "happy t
 - Escalate CTA strength gradually (soft → specific time → booking)
 - Each message should address a different aspect of their decision
 - Study the template examples — learn from what's working, not just the words
+
+## Message Quality Rules
+
+- Every message MUST have a CTA — question, soft suggestion, or implied next step. No dead-end tips.
+- Reference actual niche_data values: property_type, loan_amount, first_home_buyer, employment_status, income_range
+- Hedge all rate/lender claims — "looks like", "I reckon", never state as fact
+- Social proof must mention HOME LOAN: BAD "helped get into first home" GOOD "helped sort their home loan for a first home"
+- Permission = ask about their lending interest ("still keen on that refinance?"), NOT about stopping messages
+- Emails must be 20-80 words body — not a text message pasted into email format
