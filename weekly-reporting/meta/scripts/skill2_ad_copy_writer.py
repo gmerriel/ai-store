@@ -133,6 +133,7 @@ def build_prompt(
     offer_name: str,
     transcripts: List[Dict[str, Any]],
     image_winners: List[Dict[str, Any]],
+    experiment_history: str = "",
 ) -> str:
     """Build the GPT-4o prompt for ad copy generation."""
 
@@ -158,10 +159,12 @@ def build_prompt(
     if not image_section:
         image_section = "(No image captions available for this funnel/week.)\n"
 
+    history_section = f"\n{experiment_history}\n" if experiment_history else ""
+
     prompt = f"""You are a direct response copywriter for Facebook/Instagram ads.
 Audience: {audience}
 Offer: {offer_name}
-
+{history_section}
 PRIORITY SOURCE — VIDEO TRANSCRIPTS (actual spoken words driving results):
 {transcript_section}
 SUPPORTING SOURCE — IMAGE AD CAPTIONS:
@@ -435,9 +438,21 @@ def run(account_key: str, funnel: str, week_start: str) -> None:
 
     print(f"  Transcripts: {len(transcripts)}, Image winners: {len(image_winners)}")
 
+    # ── Pull experiment history ──
+    try:
+        from experiment_tracker import get_past_experiments_for_prompt
+        experiment_history = get_past_experiments_for_prompt(account_key, funnel)
+        if experiment_history:
+            print("  [HISTORY] Past experiment data loaded — injecting into prompt")
+        else:
+            print("  [HISTORY] No closed experiments yet for this funnel")
+    except Exception as _exc:
+        experiment_history = ""
+        print(f"  [HISTORY] Skipped (experiment_tracker unavailable): {_exc}")
+
     # ── Build prompt and call GPT-4o ──
     print("\n[2] Calling GPT-4o for copy generation…")
-    prompt = build_prompt(audience, offer_name, transcripts, image_winners)
+    prompt = build_prompt(audience, offer_name, transcripts, image_winners, experiment_history)
 
     try:
         response = openai_client.chat.completions.create(
@@ -484,6 +499,21 @@ def run(account_key: str, funnel: str, week_start: str) -> None:
             print(f"  [DB] Upserted ad_concepts: {concept_id}")
         except Exception as exc:
             print(f"  [ERROR] Supabase upsert failed for {concept_id}: {exc}")
+
+    # ── Auto-log concepts as experiments ──
+    try:
+        from experiment_tracker import log_experiments_from_concepts
+        # Enrich concepts with the concept_id that was just saved
+        enriched = []
+        for c in concepts:
+            enriched.append({
+                **c,
+                "concept_id": f"{client_slug}_{funnel}_C{c['concept_num']}_{week_str}",
+            })
+        exp_count = log_experiments_from_concepts(account_key, funnel, week_start, enriched)
+        print(f"  [EXPERIMENTS] Auto-logged {exp_count} hook(s) as ACTIVE experiments")
+    except Exception as _exc:
+        print(f"  [EXPERIMENTS] Skipped auto-log: {_exc}")
 
     # ── Write markdown ──
     write_markdown(
